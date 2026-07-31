@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Audio corpus and generated artifacts — data, not source
+data/
+*.db
+
+# Node / web app
+web/node_modules/
+web/dist/
+
+# Environment
+.env
+
+# OS
+.DS_Store
+
+# Vendored agent tooling — not project source.
+# The rules files are the exception: they are instructions this repo depends on.
+# Ignore the contents rather than the directory itself, so the exception below
+# can still take effect — git cannot re-include a file inside an ignored dir.
+/.claude/*
+!/.claude/rules/
+release-manifest.json

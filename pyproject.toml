@@ -1,0 +1,61 @@
+[project]
+name = "shazam-dsp"
+version = "0.1.0"
+description = "Audio fingerprinting music recognition via constellation hashing (DSP501)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.5",
+    "scipy>=1.18",
+    "soundfile>=0.14",
+    "sounddevice>=0.5.5",
+    "matplotlib>=3.10",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16",
+    "mypy>=2.3",
+    "pytest>=9.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shazam"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]
+# .claude holds vendored agent tooling, not project source.
+extend-exclude = [".claude", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests", "scripts"]
+warn_unreachable = true
+
+# These libraries ship no type information. Everything we write on top of them
+# stays strictly typed; only the imports themselves are exempt.
+[[tool.mypy.overrides]]
+module = ["scipy.*", "soundfile.*", "sounddevice.*", "matplotlib.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

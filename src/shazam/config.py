@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 @dataclass(frozen=True)
 class DspConfig:
@@ -64,3 +66,46 @@ class DspConfig:
     def seconds_to_frames(self, seconds: float) -> int:
         """Convert a duration in seconds to a whole number of STFT frames."""
         return round(seconds / self.frame_duration)
+
+
+@dataclass(frozen=True)
+class MatchConfig:
+    """Thresholds deciding whether a query counts as recognised.
+
+    Design decision #2. Taking the tallest offset histogram peak on its own
+    always returns *some* track, even for white noise, so two conditions must
+    hold together. With 8000 tracks in the corpus the chance of a plausible
+    wrong answer is far higher than it would be with a few dozen.
+
+    Attributes:
+        min_score: Fewest aligned hashes that can count as a match. Guards
+            against a query that resembles nothing in the corpus.
+        score_ratio: How far ahead of the runner-up the winner must be. Guards
+            against a query that resembles two tracks equally, where picking
+            either would be a coin flip. Skipped when there is only one
+            candidate, since there is nothing to compare against.
+    """
+
+    min_score: int = 10
+    score_ratio: float = 2.0
+
+
+class DatabaseSettings(BaseSettings):
+    """Database connection settings, read from the environment.
+
+    Validated at construction so a missing or malformed ``DATABASE_URL`` fails
+    immediately with a clear message, rather than surfacing as a connection
+    error on the first query. Phase 7 runs this in a container where there is
+    no local config file to fall back on.
+
+    Attributes:
+        database_url: libpq connection string for the fingerprint database.
+        pool_min_size: Connections opened eagerly when the pool starts.
+        pool_max_size: Ceiling on concurrent connections.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: str = "postgresql://shazam:shazam@localhost:5432/shazam"
+    pool_min_size: int = 1
+    pool_max_size: int = 10

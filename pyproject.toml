@@ -10,6 +10,16 @@ dependencies = [
     "soundfile>=0.14",
     "sounddevice>=0.5.5",
     "matplotlib>=3.10",
+    "psycopg[binary,pool]>=3.3",
+    "pydantic-settings>=2.14",
+    "structlog>=26.1",
+    # Phase 3 — FMA catalogue
+    "httpx>=0.28",
+    "pandas>=2.3",
+    # Phase 4 — HTTP API
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.52",
+    "python-multipart>=0.0.32",
 ]
 
 [dependency-groups]
@@ -23,8 +33,11 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.scripts]
+shazam = "shazam.cli:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/shazam"]
+packages = ["src/shazam", "src/server"]
 
 [tool.ruff]
 line-length = 100

@@ -84,9 +84,23 @@ class MatchConfig:
             against a query that resembles two tracks equally, where picking
             either would be a coin flip. Skipped when there is only one
             candidate, since there is nothing to compare against.
+
+    ``min_score`` is 20 rather than 10 because of measurements on the full
+    8000-track corpus, using held-out tracks as impostors — real music from the
+    same collection, not noise. Correct tracks scored 222 at the lowest and 1205
+    at the median; impostors sat at a median of 6 and a 95th percentile of 13.
+    Raising the floor from 10 to 20 halved the false accepts (6 of 120 down to
+    3) and cost no correct match, since the nearest genuine score is still more
+    than ten times the threshold.
+
+    Do not raise it much further. Nothing above 20 removed another false accept
+    — the three that remain are duplicate recordings that exist twice in the
+    corpus under different ids, which no score threshold can separate. Meanwhile
+    a microphone recording scores far lower than a clip cut from a file, so a
+    high floor buys nothing here and quietly costs real-world recall.
     """
 
-    min_score: int = 10
+    min_score: int = 20
     score_ratio: float = 2.0
 
 

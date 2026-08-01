@@ -1,0 +1,259 @@
+/* Plain CSS, one page — deliberately no UI component library (see phase-05 spec). */
+
+:root {
+  color-scheme: light dark;
+  --color-bg: #0f1115;
+  --color-surface: #1a1d24;
+  --color-border: #2c303a;
+  --color-text: #eef0f4;
+  --color-muted: #9aa1ad;
+  --color-accent: #4f7cff;
+  --color-danger: #e5484d;
+  --color-warn: #d9a441;
+  --color-ok: #3ecf8e;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.app__header {
+  text-align: center;
+}
+
+.app__header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.app__header p {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.app__recorder-error {
+  color: var(--color-danger);
+  text-align: center;
+  margin: 0;
+}
+
+.app__spectrogram-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.app__spectrogram-toggle input:disabled {
+  cursor: not-allowed;
+}
+
+.app__spectrogram {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app__spectrogram img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+}
+
+.app__spectrogram-error {
+  color: var(--color-danger);
+}
+
+/* ---- record-button ---- */
+
+.record-button {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.record-button:not(:disabled):hover {
+  transform: scale(1.03);
+}
+
+.record-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.record-button__icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-danger);
+}
+
+.record-button--recording .record-button__icon {
+  border-radius: 6px;
+}
+
+.record-button__label {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  text-align: center;
+  padding: 0 0.75rem;
+}
+
+.record-button__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.record-button__ring-track {
+  fill: none;
+  stroke: var(--color-border);
+  stroke-width: 4;
+}
+
+.record-button__ring-progress {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+  animation-name: record-ring-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes record-ring-countdown {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 339.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .record-button__ring-progress {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ---- match-result ---- */
+
+.match-result {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 1rem 1.25rem;
+  text-align: center;
+}
+
+.match-result p {
+  margin: 0.25rem 0;
+}
+
+.match-result--matched {
+  border-color: var(--color-ok);
+}
+
+.match-result--weak {
+  border-color: var(--color-warn);
+}
+
+.match-result__title {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.match-result__artist {
+  color: var(--color-muted);
+}
+
+.match-result__strength {
+  font-size: 0.85rem;
+  color: var(--color-muted);
+}
+
+.match-result--not-found {
+  border-color: var(--color-warn);
+}
+
+.match-result--error {
+  border-color: var(--color-danger);
+}
+
+/* ---- song-list ---- */
+
+.song-list {
+  width: 100%;
+}
+
+.song-list__search {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  margin: 0.5rem 0;
+}
+
+.song-list__count {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.song-list__error {
+  color: var(--color-danger);
+}
+
+.song-list__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.song-list__table th,
+.song-list__table td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.song-list__table th {
+  color: var(--color-muted);
+  font-weight: 500;
+}

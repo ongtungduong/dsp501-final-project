@@ -11,6 +11,7 @@ healthy, which is close to undebuggable.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import BinaryIO
 
@@ -40,6 +41,27 @@ def load(path: str | Path, config: DspConfig | None = None) -> npt.NDArray[np.fl
         AudioLoadError: If the file cannot be decoded or yields too few samples.
     """
     return _read(str(path), config or DspConfig())
+
+
+def load_bytes(data: bytes, config: DspConfig | None = None) -> npt.NDArray[np.float32]:
+    """Decode an in-memory audio upload the same way :func:`load` decodes a file.
+
+    The HTTP API's only entry point into this module (design decision #1).
+    Delegating straight to :func:`_read` through a fresh :class:`io.BytesIO`
+    means this cannot drift from :func:`load`'s decode settings, resample
+    filter, or error contract — both entry points share one code path.
+
+    Args:
+        data: Raw bytes of an audio file, e.g. an HTTP upload body.
+        config: DSP parameters. Defaults to :class:`DspConfig`.
+
+    Returns:
+        A 1-D float32 signal at ``config.sample_rate``, normalised to [-1, 1].
+
+    Raises:
+        AudioLoadError: If the bytes cannot be decoded or yield too few samples.
+    """
+    return _read(io.BytesIO(data), config or DspConfig())
 
 
 def _read(

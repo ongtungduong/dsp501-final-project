@@ -97,16 +97,35 @@ def init_schema(conn: psycopg.Connection) -> None:
 
 
 def create_index(conn: psycopg.Connection) -> None:
-    """Build the hash index. Run once, after the corpus is fully loaded.
+    """Build the indexes. Run once, after the corpus is fully loaded.
 
-    ``maintenance_work_mem`` is raised for the duration because sorting 48
-    million keys in a small work area spills to disk and takes far longer.
+    The hash index carries ``song_id`` and ``offset`` as INCLUDE columns so
+    lookups are satisfied entirely from the index. Without them, a query
+    matching hundreds of thousands of rows has to visit that many scattered
+    positions in a 1.9 GB heap; with them, the heap is never touched. The extra
+    payload costs roughly a gigabyte of disk and is the difference between
+    meeting and missing the two-second target at full corpus size.
+
+    ``song_id`` gets its own index because the foreign key cascades on delete,
+    and an unindexed child column turns removing one track into a scan of all
+    48 million rows.
+
+    ``maintenance_work_mem`` is raised first: sorting tens of millions of keys
+    in the default 64 MB work area spills to disk and takes far longer.
     """
     with conn.cursor() as cursor:
         cursor.execute("SET maintenance_work_mem = '1GB'")
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_fingerprints_hash ON fingerprints USING btree (hash)'
+            "CREATE INDEX IF NOT EXISTS idx_fingerprints_hash "
+            'ON fingerprints USING btree (hash) INCLUDE (song_id, "offset")'
         )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fingerprints_song_id ON fingerprints (song_id)"
+        )
+        # Bulk COPY leaves the planner with no statistics. Without this the
+        # first queries after a build can run against stale estimates until
+        # autovacuum catches up.
+        cursor.execute("ANALYZE fingerprints")
     conn.commit()
 
 
@@ -189,6 +208,67 @@ def lookup(conn: psycopg.Connection, hashes: Sequence[int]) -> list[tuple[int, i
         return [(int(h), int(song_id), int(offset)) for h, song_id, offset in cursor.fetchall()]
 
 
+def lookup_histogram(
+    conn: psycopg.Connection,
+    query_hashes: Sequence[tuple[int, int]],
+    limit: int = 50,
+) -> list[tuple[int, int, int]]:
+    """Build the offset histogram in the database and return only its summits.
+
+    The naive approach — fetch every matching row and count in Python — moves
+    an unacceptable amount of data at full corpus size. Measured on ten tracks,
+    a ten-second query already pulls back roughly forty incidental rows per
+    unrelated track; across eight thousand tracks that extrapolates to
+    hundreds of thousands of rows serialised, rebuilt as Python tuples, and
+    counted, purely to discard almost all of them. Aggregating server-side
+    returns one row per candidate track instead.
+
+    ``count(DISTINCT hash)`` rather than ``count(*)``: the score is meant to be
+    how many *different* hashes agree on an alignment. Counting occurrences
+    instead lets a single hash that repeats through a query — a drone, a loop,
+    a metronome — pile up votes on its own and clear the acceptance threshold
+    by itself.
+
+    Args:
+        conn: Open connection.
+        query_hashes: ``(hash, query_frame)`` pairs from the recording.
+        limit: How many candidate tracks to return.
+
+    Returns:
+        ``(song_id, offset_frames, score)``, best first.
+    """
+    if not query_hashes:
+        return []
+
+    hashes = [hash_value for hash_value, _ in query_hashes]
+    frames = [frame for _, frame in query_hashes]
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT song_id, delta, score
+            FROM (
+                SELECT DISTINCT ON (f.song_id)
+                       f.song_id                     AS song_id,
+                       f."offset" - q.frame          AS delta,
+                       count(DISTINCT f.hash)        AS score
+                FROM fingerprints f
+                JOIN unnest(%s::bigint[], %s::int[]) AS q(hash, frame)
+                  ON f.hash = q.hash
+                GROUP BY f.song_id, (f."offset" - q.frame)
+                ORDER BY f.song_id, count(DISTINCT f.hash) DESC
+            ) best
+            ORDER BY score DESC
+            LIMIT %s
+            """,
+            (hashes, frames, limit),
+        )
+        return [
+            (int(song_id), int(delta), int(score))
+            for song_id, delta, score in cursor.fetchall()
+        ]
+
+
 def fetch_song(conn: psycopg.Connection, song_id: int) -> tuple[str, str | None] | None:
     """Return ``(title, artist)`` for a track, or ``None`` if it is unknown."""
     with conn.cursor() as cursor:
@@ -210,16 +290,21 @@ def stats(conn: psycopg.Connection, top: int = 10) -> DatabaseStats:
     The frequency tail is not decoration. A hash shared by thousands of tracks
     carries almost no discriminating information while costing the most to look
     up, so this is the measurement that says whether such hashes need pruning.
+
+    Expensive by nature: the counts and the grouping each scan every row. Fine
+    for a command someone runs deliberately, unacceptable behind an HTTP
+    endpoint — the API caches its totals at startup instead.
     """
     with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) FROM songs")
         songs = int((cursor.fetchone() or [0])[0])
 
-        cursor.execute("SELECT COUNT(*) FROM fingerprints")
-        fingerprints = int((cursor.fetchone() or [0])[0])
-
-        cursor.execute("SELECT COUNT(DISTINCT hash) FROM fingerprints")
-        distinct = int((cursor.fetchone() or [0])[0])
+        # One pass for both totals rather than two. Still a full scan of tens of
+        # millions of rows, which is why this belongs behind an explicit
+        # command and must never be put on a health-check path.
+        cursor.execute("SELECT COUNT(*), COUNT(DISTINCT hash) FROM fingerprints")
+        row = cursor.fetchone() or (0, 0)
+        fingerprints, distinct = int(row[0]), int(row[1])
 
         cursor.execute(
             """

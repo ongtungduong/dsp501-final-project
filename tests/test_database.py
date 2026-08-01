@@ -26,8 +26,10 @@ from shazam.database import (
     init_schema,
     insert_song,
     lookup,
+    lookup_histogram,
 )
 from shazam.hashing import HASH_BITS, pack_hash
+from shazam.matcher import rank_candidates
 
 MAX_HASH = 2**HASH_BITS - 1
 
@@ -48,12 +50,17 @@ def conn() -> Iterator[psycopg.Connection]:
     connection.commit()
     init_schema(connection)
 
-    yield connection
-
-    with connection.cursor() as cursor:
-        cursor.execute("DROP SCHEMA pytest_scratch CASCADE")
-    connection.commit()
-    connection.close()
+    try:
+        yield connection
+    finally:
+        # Roll back first: a test that left the transaction in a failed state
+        # would make the DROP raise, and the scratch schema would survive into
+        # the next run to break an unrelated test.
+        connection.rollback()
+        with connection.cursor() as cursor:
+            cursor.execute("DROP SCHEMA pytest_scratch CASCADE")
+        connection.commit()
+        connection.close()
 
 
 def _add_song(conn: psycopg.Connection, path: str = "/tmp/track.wav") -> int:
@@ -154,6 +161,47 @@ def test_existing_paths_reports_what_was_built(conn: psycopg.Connection) -> None
     conn.commit()
 
     assert existing_paths(conn) == {"/tmp/one.wav", "/tmp/two.wav"}
+
+
+def test_sql_histogram_agrees_with_the_python_scorer(conn: psycopg.Connection) -> None:
+    """The two scoring paths must not drift apart.
+
+    Matching aggregates in SQL for speed, while the pure Python scorer is what
+    the unit tests exercise. If they ever disagree, the tested behaviour stops
+    being the shipped behaviour — so pin them against each other on real rows.
+    """
+    song_id = _add_song(conn, "/tmp/aligned.wav")
+    other_id = _add_song(conn, "/tmp/decoy.wav")
+
+    query = [(pack_hash(10 + i, 20 + i, 5), i) for i in range(30)]
+    aligned = [(h, song_id, frame + 100) for h, frame in query]
+    decoy = [(h, other_id, frame * 3 + 7) for h, frame in query[:12]]
+
+    copy_fingerprints(conn, song_id, [(h, off) for h, _, off in aligned])
+    copy_fingerprints(conn, other_id, [(h, off) for h, _, off in decoy])
+    conn.commit()
+
+    from_sql = lookup_histogram(conn, query)
+    from_python = rank_candidates(query, lookup(conn, [h for h, _ in query]))
+
+    assert from_sql[0][0] == song_id
+    assert from_sql[0][1] == 100
+    assert from_sql[0][2] == 30
+
+    assert [(c.song_id, c.offset_frames, c.score) for c in from_python] == from_sql
+
+
+def test_histogram_scores_distinct_hashes_not_occurrences(conn: psycopg.Connection) -> None:
+    """The SQL path enforces the same rule as the Python one."""
+    song_id = _add_song(conn, "/tmp/drone.wav")
+    repeated = pack_hash(7, 9, 11)
+
+    copy_fingerprints(conn, song_id, [(repeated, 200 + 4 * i) for i in range(20)])
+    conn.commit()
+
+    scores = lookup_histogram(conn, [(repeated, 4 * i) for i in range(20)])
+
+    assert scores[0][2] == 1, "one distinct hash must score one, however often it repeats"
 
 
 def test_fetch_song_returns_metadata(conn: psycopg.Connection) -> None:

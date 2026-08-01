@@ -13,14 +13,13 @@ So the tallest spike is the answer and its height is the score.
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import psycopg
 
 from shazam.config import DspConfig, MatchConfig
-from shazam.database import fetch_song, lookup
+from shazam.database import fetch_song, lookup_histogram
 
 
 @dataclass(frozen=True)
@@ -46,8 +45,16 @@ class MatchResult:
         song_id: Database id of the matched track.
         title: Track title.
         artist: Performer, when the catalogue knows one.
-        score: Aligned hash count at the histogram spike.
-        confidence: ``score`` over the number of hashes the query produced.
+        score: How many distinct hashes agree at the histogram spike. This is
+            the number the decision is actually made on.
+        aligned_fraction: ``score`` over the number of hashes the query
+            produced. Deliberately *not* called confidence: most query hashes
+            have no counterpart by construction, so even a flawless excerpt of
+            a corpus track measures around 0.18, and a microphone recording in
+            a room lands nearer 0.02. Presenting it as a percentage would read
+            as "18% sure" for a perfect match.
+        strength: Coarse label derived from ``score``, for interfaces that need
+            something honest to show a person.
         offset_seconds: Where in the track the recording started.
     """
 
@@ -55,8 +62,26 @@ class MatchResult:
     title: str
     artist: str | None
     score: int
-    confidence: float
+    aligned_fraction: float
+    strength: str
     offset_seconds: float
+
+
+# Score bands for display. A match must already have cleared min_score and the
+# runner-up ratio to exist at all, so even "weak" means accepted — the label
+# separates a comfortable identification from a marginal one, and gives the
+# interface a reason to suggest recording again.
+STRONG_SCORE = 100
+MODERATE_SCORE = 30
+
+
+def match_strength(score: int) -> str:
+    """Describe how firmly a match is established."""
+    if score >= STRONG_SCORE:
+        return "strong"
+    if score >= MODERATE_SCORE:
+        return "moderate"
+    return "weak"
 
 
 def rank_candidates(
@@ -79,13 +104,18 @@ def rank_candidates(
     for hash_value, frame in query_hashes:
         query_frames.setdefault(hash_value, []).append(frame)
 
-    votes: Counter[tuple[int, int]] = Counter()
+    # Distinct hashes per alignment, not vote count. A hash that repeats through
+    # the query — a sustained tone, a loop, a metronome — would otherwise stack
+    # votes on one alignment by itself and clear the threshold alone, matching
+    # any track that shares that single repeating pattern.
+    agreeing: dict[tuple[int, int], set[int]] = {}
     for hash_value, song_id, db_offset in hits:
         for query_frame in query_frames.get(hash_value, ()):
-            votes[(song_id, db_offset - query_frame)] += 1
+            agreeing.setdefault((song_id, db_offset - query_frame), set()).add(hash_value)
 
     best_per_song: dict[int, Candidate] = {}
-    for (song_id, offset), score in votes.items():
+    for (song_id, offset), hashes in agreeing.items():
+        score = len(hashes)
         current = best_per_song.get(song_id)
         if current is None or score > current.score:
             best_per_song[song_id] = Candidate(song_id, score, offset)
@@ -112,11 +142,8 @@ def select_match(
     if best.score < config.min_score:
         return None
 
-    if len(candidates) > 1:
-        runner_up = candidates[1]
-        # A runner-up with no votes cannot make the winner ambiguous.
-        if runner_up.score > 0 and best.score / runner_up.score < config.score_ratio:
-            return None
+    if len(candidates) > 1 and best.score / candidates[1].score < config.score_ratio:
+        return None
 
     return best
 
@@ -152,8 +179,14 @@ def identify(
     if not query_hashes:
         return None
 
-    hits = lookup(conn, [hash_value for hash_value, _ in query_hashes])
-    chosen = select_match(rank_candidates(query_hashes, hits), match_config)
+    # Aggregated server-side: see database.lookup_histogram for why the rows
+    # are not pulled back and counted here.
+    candidates = [
+        Candidate(song_id=song_id, score=score, offset_frames=delta)
+        for song_id, delta, score in lookup_histogram(conn, query_hashes)
+    ]
+
+    chosen = select_match(candidates, match_config)
     if chosen is None:
         return None
 
@@ -167,6 +200,7 @@ def identify(
         title=title,
         artist=artist,
         score=chosen.score,
-        confidence=chosen.score / len(query_hashes),
+        aligned_fraction=chosen.score / len(query_hashes),
+        strength=match_strength(chosen.score),
         offset_seconds=offset_to_seconds(chosen.offset_frames, config),
     )

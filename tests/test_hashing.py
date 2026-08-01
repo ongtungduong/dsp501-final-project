@@ -78,6 +78,41 @@ def test_pairs_respect_the_target_zone() -> None:
         assert min_frames <= delta <= max_frames
 
 
+def test_target_zone_boundaries_are_inclusive() -> None:
+    """Both edges of the zone must be admitted, not one short of each.
+
+    This is worth pinning precisely: on the live corpus the minimum delta is
+    also the *most common* one, so flipping ``<=`` to ``<`` at the near edge
+    would silently discard a few percent of every fingerprint in the database
+    while every other test still passed.
+    """
+    config = DspConfig()
+    min_delta = config.seconds_to_frames(config.min_time_delta)
+    max_delta = config.seconds_to_frames(config.max_time_delta)
+
+    def deltas_for(gap: int) -> list[int]:
+        pairs = generate_hashes(_peaks((0, 100), (gap, 200)), config)
+        return [unpack_hash(h)[2] for h, _ in pairs]
+
+    assert deltas_for(min_delta) == [min_delta], "near edge must be included"
+    assert deltas_for(max_delta) == [max_delta], "far edge must be included"
+    assert deltas_for(min_delta - 1) == [], "inside the near edge must be excluded"
+    assert deltas_for(max_delta + 1) == [], "beyond the far edge must be excluded"
+
+
+def test_unsorted_peaks_are_rejected() -> None:
+    """Pairing assumes time order; out-of-order input would silently under-hash.
+
+    Peaks arriving unsorted produce negative deltas, which fall below the
+    minimum and get skipped — fewer fingerprints, no error, no clue why
+    recognition got worse.
+    """
+    config = DspConfig()
+
+    with pytest.raises(ValueError, match="sorted"):
+        list(generate_hashes(_peaks((50, 100), (10, 200), (90, 150)), config))
+
+
 def test_fan_out_is_respected() -> None:
     """Each anchor pairs with at most fan_out targets — this bounds database size."""
     config = DspConfig(fan_out=3)
@@ -89,6 +124,10 @@ def test_fan_out_is_respected() -> None:
 
     assert counts, "expected some pairs"
     assert max(counts.values()) <= config.fan_out
+    # An anchor with plenty of targets ahead of it must actually use its full
+    # allowance — asserting only the ceiling would pass an implementation that
+    # emitted a single pair per anchor.
+    assert counts[peaks[0].frame] == config.fan_out
 
 
 def test_anchor_time_is_the_earlier_peak() -> None:

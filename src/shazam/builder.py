@@ -18,15 +18,15 @@ from __future__ import annotations
 
 import multiprocessing
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import psycopg
 
-from shazam.audio import AudioLoadError
+from shazam.audio import AudioLoadError, load
 from shazam.config import DspConfig
 from shazam.database import SongRecord, copy_fingerprints, existing_paths, insert_song
-from shazam.fingerprint import fingerprint_file
+from shazam.fingerprint import fingerprint_signal
 from shazam.sources import TrackMeta
 
 
@@ -41,6 +41,7 @@ class TrackResult:
 
     meta: TrackMeta
     hashes: list[tuple[int, int]]
+    duration: float | None = None
     error: str | None = None
 
 
@@ -57,8 +58,14 @@ class BuildSummary:
 
 def _fingerprint_track(meta: TrackMeta) -> TrackResult:
     """Worker entry point: fingerprint one track, converting failure to data."""
+    config = DspConfig()
     try:
-        return TrackResult(meta=meta, hashes=fingerprint_file(meta.path))
+        signal = load(meta.path, config)
+        return TrackResult(
+            meta=meta,
+            hashes=fingerprint_signal(signal, config),
+            duration=len(signal) / config.sample_rate,
+        )
     except AudioLoadError as exc:
         return TrackResult(meta=meta, hashes=[], error=str(exc))
     except Exception as exc:  # a corrupt file can fail in ways libsndfile does not own
@@ -72,6 +79,7 @@ def build(
     limit: int | None = None,
     config: DspConfig | None = None,
     progress: bool = True,
+    track_timeout: float = 120.0,
 ) -> BuildSummary:
     """Fingerprint tracks in parallel and load them into the database.
 
@@ -83,6 +91,8 @@ def build(
             against a few hundred tracks before committing to all 8000.
         config: DSP parameters.
         progress: Print a per-track progress line.
+        track_timeout: Seconds to wait for any one track before giving up on
+            it. Guards against a worker dying without raising.
 
     Returns:
         Totals for the run.
@@ -102,8 +112,30 @@ def build(
     total = len(pending)
     # imap_unordered so a slow track never holds up the ones behind it; the
     # parent writes results in whatever order they finish.
-    with multiprocessing.Pool(workers) as pool:
-        for index, result in enumerate(pool.imap_unordered(_fingerprint_track, pending), 1):
+    #
+    # Results are pulled with an explicit timeout rather than a plain for-loop.
+    # A worker that *raises* is already handled inside _fingerprint_track, but a
+    # worker that dies outright — a segfault in the audio decoder, or the OOM
+    # killer — never raises anything, and the pool then waits on a result that
+    # will never arrive. Verified: the build delivers every other track and then
+    # blocks permanently, with no error and no summary. FMA is known to contain
+    # truncated files, so this is a question of when, not whether.
+    with multiprocessing.Pool(workers, maxtasksperchild=200) as pool:
+        results = pool.imap_unordered(_fingerprint_track, pending)
+        for index in range(1, total + 1):
+            try:
+                result = results.next(timeout=track_timeout)
+            except StopIteration:
+                break
+            except multiprocessing.TimeoutError:
+                summary.failed += 1
+                print(
+                    f"[{index:>5}/{total}] worker lost or exceeded "
+                    f"{track_timeout:.0f}s — skipping",
+                    flush=True,
+                )
+                continue
+
             _store(conn, result, summary)
             if progress:
                 _report(index, total, result, summary, started)
@@ -142,8 +174,14 @@ def _store(conn: psycopg.Connection, result: TrackResult, summary: BuildSummary)
         SongRecord(
             title=result.meta.title,
             artist=result.meta.artist,
-            path=str(result.meta.path),
-            duration=None,
+            # Resolved, not as given. The unique path is what makes a build
+            # resumable, so it has to be the same string no matter which
+            # directory the command ran from or whether --songs-dir was
+            # relative. Otherwise a rerun re-adds every track, and duplicate
+            # entries split the vote in matching until the ratio guard rejects
+            # a song that is in fact present.
+            path=str(result.meta.path.resolve()),
+            duration=result.duration,
             source=result.meta.source,
         ),
     )
@@ -169,17 +207,17 @@ def _report(
     """Print one progress line with a running estimate of time left."""
     elapsed = time.monotonic() - started
     remaining = (elapsed / index) * (total - index)
-    status = f"{len(result.hashes):>6} hashes" if result.error is None else f"FAILED {result.error}"
+    if result.error is not None:
+        status = f"FAILED {result.error}"
+    elif not result.hashes:
+        # Distinguished from a decode failure: the file read fine but produced
+        # nothing to store — silence, or audio too quiet to clear the peak floor.
+        status = "SKIPPED no fingerprints"
+    else:
+        status = f"{len(result.hashes):>6} hashes"
+
     print(
         f"[{index:>5}/{total}] {result.meta.title[:44]:<44} {status}  "
         f"~{remaining / 60:.0f}m left",
         flush=True,
     )
-
-
-def iter_limited(tracks: Iterable[TrackMeta], limit: int | None) -> Iterator[TrackMeta]:
-    """Yield at most ``limit`` tracks, or everything when ``limit`` is None."""
-    for index, meta in enumerate(tracks):
-        if limit is not None and index >= limit:
-            return
-        yield meta

@@ -35,6 +35,36 @@ def test_consistent_offset_produces_a_single_sharp_candidate() -> None:
     assert candidates[0].score == 20
 
 
+def test_one_repeating_hash_cannot_carry_a_match() -> None:
+    """A drone, a loop or a metronome must not be enough on its own.
+
+    Scoring vote occurrences instead of distinct hashes lets a single hash that
+    repeats through the query stack twenty votes on one alignment, clear the
+    absolute floor, and skip the ratio check entirely for want of a runner-up.
+    The score is how many *different* hashes agree.
+    """
+    query = [(9, 4 * i) for i in range(20)]
+    hits = _hits(*[(9, 1, 200 + 4 * i) for i in range(20)])
+
+    candidates = rank_candidates(query, hits)
+
+    assert candidates[0].score == 1
+    assert select_match(candidates, MatchConfig(min_score=10, score_ratio=2.0)) is None
+
+
+def test_repeated_hashes_count_once_per_alignment() -> None:
+    """Genuine agreement still counts, it just is not multiplied by repetition."""
+    query = [(100, 0), (100, 50), (200, 10), (300, 20)]
+    hits = _hits((100, 1, 5), (100, 1, 55), (200, 1, 15), (300, 1, 25))
+
+    candidates = rank_candidates(query, hits)
+
+    # Three distinct hashes line up at offset 5; the repeat of hash 100 adds no
+    # extra credit beyond the one it already earned.
+    assert candidates[0].offset_frames == 5
+    assert candidates[0].score == 3
+
+
 def test_scattered_offsets_do_not_accumulate() -> None:
     """Coincidental collisions land on different offsets and never build a spike."""
     query = [(2000 + i, i) for i in range(40)]

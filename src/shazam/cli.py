@@ -1,7 +1,7 @@
 """Command-line interface.
 
     shazam init-db                                    create the schema
-    shazam build [--source local] [--limit N] [--workers 10]
+    shazam build [--songs-dir DIR] [--limit N] [--workers 10]
     shazam create-index                               after building
     shazam match <file>                               identify an audio file
     shazam listen [--seconds 8]                       identify from the microphone
@@ -91,7 +91,7 @@ def _cmd_create_index(_: argparse.Namespace) -> int:
 def _cmd_build(args: argparse.Namespace) -> int:
     tracks = list(_collect_tracks(args))
     if not tracks:
-        print(f"No audio found. Put files in {args.songs_dir}/ or run `shazam fetch`.")
+        print(f"No audio found. Put audio files in {args.songs_dir}/ and run this again.")
         return 1
 
     print(f"Found {len(tracks)} tracks. Fingerprinting...")
@@ -165,7 +165,8 @@ def _print_result(result: MatchResult | None) -> None:
     artist = result.artist or "unknown artist"
     print(f"\n  {result.title}")
     print(f"  {artist}")
-    print(f"  score {result.score}, confidence {result.confidence:.1%}")
+    print(f"  {result.strength} match — {result.score} hashes agree "
+          f"({result.aligned_fraction:.1%} of the query aligned)")
     print(f"  the recording starts {result.offset_seconds:.1f}s into the track")
 
 

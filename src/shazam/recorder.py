@@ -8,6 +8,8 @@ path any more than the browser does.
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import numpy.typing as npt
 
@@ -49,9 +51,15 @@ def record(
     if device_rate is None:
         device_rate = _preferred_rate(sounddevice)
 
-    frames = int(seconds * device_rate)
-    captured = sounddevice.rec(frames, samplerate=device_rate, channels=1, dtype="float32")
-    sounddevice.wait()
+    # PortAudio reports a missing or busy device as PortAudioError, which is a
+    # plain Exception. Converted here so the documented contract is the real
+    # one and callers can catch a single type.
+    try:
+        frames = int(seconds * device_rate)
+        captured = sounddevice.rec(frames, samplerate=device_rate, channels=1, dtype="float32")
+        sounddevice.wait()
+    except Exception as exc:
+        raise RuntimeError(f"Recording failed: {exc}") from exc
 
     return _process(np.asarray(captured, dtype=np.float32), device_rate, config)
 
@@ -65,9 +73,19 @@ def _preferred_rate(sounddevice: object) -> int:
     at the device's own rate keeps every conversion inside
     :func:`shazam.audio._process`. MacBook microphones typically report 48 kHz,
     the same rate the browser delivers.
+
+    If the rate cannot be determined we fall back, but say so: the fallback
+    reintroduces exactly the hidden conversion this function exists to avoid,
+    and silently accepting that would undo the argument above.
     """
     try:
         info = sounddevice.query_devices(kind="input")  # type: ignore[attr-defined]
         return int(float(info["default_samplerate"]))
-    except Exception:
+    except Exception as exc:
+        print(
+            f"Warning: could not read the input device rate ({exc}); "
+            f"requesting {FALLBACK_DEVICE_RATE} Hz. If the device runs at a "
+            f"different rate, the OS will resample before we see the audio.",
+            file=sys.stderr,
+        )
         return FALLBACK_DEVICE_RATE

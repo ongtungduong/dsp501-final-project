@@ -33,6 +33,10 @@ class LocalSource:
                 yield TrackMeta(
                     title=path.stem,
                     artist=None,
-                    path=path,
+                    # Absolute, so the same file yields the same catalogue key
+                    # regardless of the working directory or whether the caller
+                    # passed a relative --songs-dir. The database's uniqueness
+                    # constraint on path is what makes a build resumable.
+                    path=path.resolve(),
                     source=self.name,
                 )

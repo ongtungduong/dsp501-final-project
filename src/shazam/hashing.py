@@ -92,6 +92,13 @@ def generate_hashes(
     min_delta = config.seconds_to_frames(config.min_time_delta)
     max_delta = config.seconds_to_frames(config.max_time_delta)
 
+    # The scan below stops at the first target beyond the zone, which is only
+    # correct while peaks run forward in time. Unsorted input would not raise —
+    # it would produce negative deltas, skip them as "too close", and quietly
+    # return a thinner fingerprint.
+    if any(peaks[i].frame > peaks[i + 1].frame for i in range(len(peaks) - 1)):
+        raise ValueError("peaks must be sorted by frame")
+
     for index, anchor in enumerate(peaks):
         paired = 0
         for target in peaks[index + 1 :]:

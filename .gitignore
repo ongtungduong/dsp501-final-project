@@ -21,6 +21,9 @@ web/dist/
 # OS
 .DS_Store
 
+# Planning notes — working material, not part of the delivered project
+plans/
+
 # Vendored agent tooling — not project source.
 # The rules files are the exception: they are instructions this repo depends on.
 # Ignore the contents rather than the directory itself, so the exception below

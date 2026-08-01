@@ -8,7 +8,7 @@ lọc đỉnh phổ, băm cặp đỉnh thành mã bất biến với dịch th�
 histogram độ lệch thời gian. Không gọi `scipy.signal.stft` — có test chặn việc đó
 quay lại.
 
-![Constellation map](docs/images/02-d-minor-constellation.png)
+![Constellation map](docs/images/000010-constellation.png)
 
 - **Thuật toán, giải thích từng bước kèm hình:** [`docs/thuat-toan.md`](docs/thuat-toan.md)
 - **Kiến trúc và các quyết định thiết kế:** [`docs/kien-truc.md`](docs/kien-truc.md)
@@ -96,8 +96,12 @@ mọi nơi.
 ## Sinh lại hình minh hoạ
 
 ```bash
-uv run python scripts/visualize_pipeline.py data/songs/<bài>.wav --out docs/images
+# Bốn hình cho bốn bước đầu: hạ mẫu, spectrogram, constellation, ghép cặp đỉnh
+uv run python scripts/visualize_pipeline.py data/fma/fma_small/000/000010.mp3 --out docs/images
+
+# Hình histogram khớp đúng / khớp sai — cần kho đã dựng
 uv run python scripts/visualize_matching.py data/queries/q-10s.wav --out docs/images
+
 uv run python scripts/benchmark_pipeline.py data/queries/q-10s.wav
 ```
 

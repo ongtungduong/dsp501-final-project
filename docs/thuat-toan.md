@@ -50,6 +50,14 @@ hẳn Nyquist 5512 Hz. Kho là 44,1 kHz còn trình duyệt gửi 48 kHz, nên *
 chỉ nhận diện kém đi. Nay dùng `resample_poly` cho tất cả: với 44100 → 11025 nó
 tự rút gọn theo GCD thành up-1/down-4, vẫn là phân chia hệ số nguyên.
 
+![Hạ tần số lấy mẫu](images/000010-resampling.png)
+
+Đường đỏ (sau khi hạ mẫu) bám sát đường xám (bản gốc 44,1 kHz) cho tới đúng
+Nyquist mới 5512 Hz rồi dừng hẳn. Đây là điều cần nhìn thấy: phần phổ trên
+5512 Hz bị **lọc bỏ**, không **gập ngược** xuống dải dưới. Nếu hạ mẫu mà quên
+lọc chống chồng phổ thì năng lượng vùng 5,5–22 kHz sẽ gập xuống thành nhiễu giả
+nằm lẫn trong dải nhạc — tai người khó nhận ra, nhưng vân tay thì hỏng.
+
 ## Bước 2 — STFT tự cài
 
 `src/shazam/stft.py`
@@ -88,7 +96,7 @@ thang đọc đúng 1,0, và ngưỡng dB có nghĩa cố định bất kể `wi
 **Kiểm chứng:** sin 440 Hz cho đỉnh ở bin 41 (= 441,4 Hz), đúng như tính toán
 440/10,77 = 40,9. Có test cho cả đường 44,1 kHz lẫn 48 kHz.
 
-![Spectrogram](images/02-d-minor-spectrogram.png)
+![Spectrogram](images/000010-spectrogram.png)
 
 ## Bước 3 — Lọc đỉnh phổ
 
@@ -115,9 +123,13 @@ khi không có epsilon, 0 khi có**. Epsilon làm im lặng thành hữu hạn (
 ngưỡng loại được nó — chứ bản thân nó không phá thế hoà.
 
 Kết quả là **constellation map**: danh sách thưa các điểm `(khung, bin tần số)`.
-Đo trên kho hiện tại: 34 đỉnh/giây.
+Đo trên nhạc thật (12 bài FMA lấy ngẫu nhiên, 360 giây): **40,9 đỉnh/giây** —
+cao hơn khoảng 20-30 mà kế hoạch ước lượng. Xem ghi chú cuối mục này.
 
-![Constellation map](images/02-d-minor-constellation.png)
+![Constellation map](images/000010-constellation.png)
+
+Chấm xanh là các đỉnh được giữ lại. Chúng bám vào các vạch hoạ âm nằm ngang và
+trải đều khắp dải tần, chứ không dồn cục vào tiếng gõ ở tần số cao.
 
 ## Bước 4 — Ghép cặp đỉnh và băm
 
@@ -148,6 +160,17 @@ thì không bao giờ khớp. Hiệu `Δt` giữa hai đỉnh thì **không đ�
 Với `fan_out = 8`, mỗi đỉnh sinh tối đa 8 hash. Đo thật: 2 672 hash cho 10 giây
 audio.
 
+![Ghép cặp đỉnh thành hash](images/000010-pairing.png)
+
+Ngôi sao xanh lá là đỉnh neo, vùng xanh nhạt là vùng đích Δt ∈ [0,1 s; 2,0 s],
+và tám chấm đỏ là các đỉnh được ghép cặp. Hai điều hình này nói rõ hơn công thức:
+
+- **Fan-out lấy tám đỉnh *gần nhất*, không phải tám đỉnh rải đều trong vùng.**
+  Vì thế các đường đỏ chụm về mép trái của vùng đích.
+- Thứ được băm là **hình dạng giữa hai đỉnh** `(f1, f2, Δt)`, không phải vị trí
+  tuyệt đối của chúng. Cắt đoạn bắt đầu ở giây nào cũng cho ra đúng hash đó —
+  đây chính là chỗ tính bất biến với dịch thời gian sinh ra.
+
 **Cạm bẫy đã gặp: `BIGINT` chứ không phải `INTEGER`.** Cửa sổ 1024 cho 513 bin,
 nên bin neo tối đa là 512, và `512 << 22 = 2 147 483 648` — vượt đúng 1 đơn vị
 so với trần `INTEGER` có dấu của PostgreSQL. Dùng `INTEGER` sẽ chỉ hỏng những
@@ -165,9 +188,12 @@ nhiên thì rải đều.
 
 ![Histogram khớp](images/histogram-khop.png)
 
-Ảnh trên là cùng một query, đối chiếu với hai bài. Bài đúng: 1 182 hash cùng chỉ
-về độ lệch 12,0 giây — đúng chỗ đoạn thu được cắt ra. Bài sai: 24 hash trùng,
-rải khắp trục, cao nhất chỉ 2.
+Ảnh trên là cùng một query, đối chiếu với hai bài, đo trên kho đủ 8 003 bài.
+Bài đúng: **1 729 hash** cùng chỉ về độ lệch **12,0 giây** — đúng chỗ đoạn thu
+được cắt ra. Bài sai: 15 hash trùng, rải khắp trục, cao nhất chỉ **1**.
+
+Chênh lệch ba bậc độ lớn này là lý do ngưỡng kép hoạt động được: không cần chỉnh
+tinh vi, vì bài đúng và bài sai không nằm cùng một thang.
 
 **Điểm số là số hash *khác nhau* đồng thuận**, không phải số lần trùng. Đếm số
 lần trùng thì một hash lặp đi lặp lại trong query — tiếng ngân dài, một vòng lặp,
@@ -176,12 +202,30 @@ có cùng mẫu lặp đó.
 
 **Hai điều kiện phải cùng thoả để chấp nhận:**
 
-1. `score >= min_score` (mặc định 10)
+1. `score >= min_score` (mặc định 20)
 2. `score / score_á_quân >= 2.0`
 
 Chỉ lấy đỉnh cao nhất thì hệ thống **luôn** trả về một bài nào đó, kể cả khi
 query là tiếng ồn trắng. Trả về "không tìm thấy" là một câu trả lời thật, và nó
 tốt hơn một câu trả lời sai tự tin — người nghe không phân biệt được đâu là đâu.
+
+Con số 20 là kết quả đo trên kho đủ 8 000 bài, không phải chọn cho đẹp. Phép thử
+dùng chính nhạc trong bộ dữ liệu làm bài "ngoài kho" (giữ lại một nhóm rồi truy
+vấn bằng chúng) — khó hơn nhiều so với thử bằng tiếng ồn:
+
+| | Điểm thấp nhất | Trung vị | p95 |
+|---|---|---|---|
+| Bài đúng | **222** | 1 205 | 2 816 |
+| Bài ngoài kho | 3 | **6** | **13** |
+
+Hai phân bố gần như không chồng lấn. Nâng ngưỡng từ 10 lên 20 bỏ được một nửa số
+ca nhận nhầm (6/120 → 3/120) mà **không mất bài đúng nào**, vì bài đúng yếu nhất
+vẫn cao hơn ngưỡng hơn mười lần.
+
+Nâng cao hơn nữa thì vô ích: ba ca nhận nhầm còn lại là **bản ghi trùng có thật
+trong `fma_small`** (145 bài nằm trong 66 nhóm trùng tên+nghệ sĩ), điểm cao ngang
+bài đúng nên không ngưỡng nào tách được. Ngược lại, đoạn thu qua micro cho điểm
+thấp hơn hẳn đoạn cắt từ file, nên ngưỡng cao chỉ âm thầm làm hụt nhận diện thật.
 
 ## Hạn chế đã biết
 

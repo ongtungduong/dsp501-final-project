@@ -137,6 +137,12 @@ Quyết định này còn kéo theo hai chỗ dễ bỏ sót:
 Chỉ lấy đỉnh histogram cao nhất thì luôn trả về một bài nào đó, kể cả với tiếng
 ồn. Phải thoả cả `score >= min_score` lẫn `score/á_quân >= 2.0`.
 
+`min_score` là **20**, chọn từ số đo trên kho đủ 8 000 bài chứ không phải áng
+chừng: bài đúng thấp nhất được 222 điểm, bài ngoài kho có trung vị 6 và p95 13.
+Nâng từ 10 lên 20 bỏ được một nửa số ca nhận nhầm mà không mất bài đúng nào.
+Không nên nâng cao hơn — đoạn thu qua micro cho điểm thấp hơn hẳn đoạn cắt từ
+file, mà phần nhận nhầm còn lại là bản trùng nên ngưỡng không giải quyết được.
+
 Hệ quả không hiển nhiên: **bản trùng trong kho phá vỡ quyết định này**. Hai bản
 của cùng một bài chia đôi histogram, á quân ngang bằng quán quân, và bài đang có
 trong kho bị trả về "không tìm thấy". Vì thế khoá chống trùng phải chuẩn — xem
@@ -182,34 +188,70 @@ lại phải dựng lại toàn bộ.
 
 ## Số đo thật
 
-Kho hiện tại (10 bài tổng hợp, dùng để phát triển và kiểm thử):
+Kho đầy đủ: 7 993 bài FMA + 10 bài tổng hợp dùng để kiểm thử.
 
-| Đại lượng | Giá trị |
-|---|---|
-| Số bài | 10 |
-| Số vân tay | 75 270 |
-| Hash khác nhau | 69 067 (trung bình 1,09 dòng/hash) |
-| Bảng `fingerprints` | 5,9 MB |
-| Index trên `hash` | 2,1 MB |
-| Thời gian dựng kho | 1,1 s với 10 tiến trình |
-| Mật độ đỉnh | 34 đỉnh/giây |
+| Đại lượng | Ước lượng ban đầu | **Đo thật** |
+|---|---|---|
+| Số bài | 8 000 | **8 003** |
+| Số vân tay | ~48 triệu | **78 485 849** |
+| Hash khác nhau | — | 6 203 032 (trung bình **12,65** dòng/hash) |
+| Bảng `fingerprints` | ~1,9 GB | **3,3 GB** |
+| Index trên `hash` | ~1,4 GB | **2,4 GB** |
+| Tổng database | ~3,5 GB | **6,2 GB** |
+| Thời gian dựng kho | 8-12 phút | **3,8 phút** (6 993 bài, 10 tiến trình) |
+| Thời gian dựng index | — | **49 s** |
+| Mật độ đỉnh | 20-30/giây | **40,9/giây** |
 
-Thời gian từng bước cho một query 10 giây (tốt nhất trong 5 lần):
+Kho lớn gấp 1,63 lần ước lượng vì mật độ đỉnh thật là 40,9/giây chứ không phải
+25 — đúng bằng tỷ lệ 40,9/25. Xem phần cuối mục này.
+
+Thời gian từng bước cho một query 10 giây (tốt nhất trong 5 lần, kho đủ 8 003 bài):
 
 | Bước | ms | % |
 |---|---|---|
-| Nạp + hạ mẫu | 2,6 | 19% |
-| STFT | 1,0 | 7% |
-| Lọc đỉnh | 3,0 | 22% |
-| Băm | 0,6 | 5% |
-| Tra cứu database | 6,5 | 47% |
-| **Tổng** | **13,7** | **732× thời gian thực** |
+| Nạp + hạ mẫu | 2,8 | 7% |
+| STFT | 1,0 | 3% |
+| Lọc đỉnh | 3,6 | 10% |
+| Băm | 0,6 | 2% |
+| Tra cứu database | **29,7** | **79%** |
+| **Tổng** | **37,8** | **264× thời gian thực** |
 
-Qua HTTP trong container: 16–19 ms cho toàn bộ vòng đời request.
+Đúng như dự đoán, tra cứu database là phần phình theo kích thước kho: từ 47% lên
+**79%** tổng thời gian, còn bốn bước DSP thì gần như không đổi. Một query giờ
+chạm 62 573 dòng thay vì 1 778.
 
-> **Chưa đo ở quy mô 8.000 bài.** Bộ FMA đang tải dở. Ước lượng của kế hoạch là
-> ~48 triệu dòng, ~3,5 GB; các số trên là kho nhỏ và **không** nên suy rộng ra —
-> tra cứu database đã chiếm 47% và nó là phần tăng theo kích thước kho.
+Đo qua HTTP thật, kho đủ 8 003 bài:
+
+| Loại truy vấn | Thời gian |
+|---|---|
+| **Đoạn 10 giây** (đúng thứ web app gửi) | **0,26-0,58 s** |
+| File mp3 đầy đủ 30 giây | 0,82-2,52 s |
+
+> Ngưỡng 2 giây **đạt với truy vấn thật** (web app thu 8 giây, `shazam listen`
+> mặc định 8 giây). Nhưng gửi nguyên bài 30 giây thì đã chạm 2,52 s: truy vấn dài
+> gấp ba sinh hash gấp ba và tra cứu nặng gấp ba. Đây là ràng buộc cần biết trước
+> khi tăng kích thước kho thêm nữa.
+
+### Chất lượng nhận diện ở quy mô thật
+
+Phép thử dùng chính nhạc trong bộ dữ liệu làm bài "ngoài kho": giữ lại một nhóm
+bài (xoá khỏi database) rồi truy vấn bằng chính chúng, sau đó nạp lại. Khó hơn
+nhiều so với thử bằng tiếng ồn trắng.
+
+| Mẫu | Nhận đúng | Từ chối đúng bài ngoài kho |
+|---|---|---|
+| n=120, `min_score` 10 | 118/120 | 114/120 |
+| n=60, `min_score` 20 | **60/60** | **57/60** |
+
+Sai số còn lại gần như đều là **bản ghi trùng có thật trong `fma_small`** — 145
+bài nằm trong 66 nhóm trùng tên+nghệ sĩ. Quan sát trực tiếp:
+`DREEMER` → `Dreemer` (điểm 1 938), `Back To It (w/ Daddy-O of Stetsasonic)` →
+`Back To It (12inch Mixx)` (660). Đây là cùng bản ghi nằm trong kho dưới hai mã
+khác nhau, không ngưỡng nào tách được.
+
+Bản trùng cũng gây ra chiều ngược lại, đúng như quyết định #2 đã lường: khi bài
+bị giữ lại có bản sao còn trong kho thì á quân ngang quán quân, tỷ lệ ≈ 1,00 và
+hệ thống **từ chối đoán**. Đó là hành vi đúng, không phải lỗi.
 
 Môi trường: Python 3.14.6, numpy 2.5.1, scipy 1.18.0, soundfile 0.14.0 (libsndfile
 1.2.2, đọc MP3 nên **không cần ffmpeg**), FastAPI 0.141.1, PostgreSQL 18.4,
@@ -218,13 +260,17 @@ Node 24.15.0. Máy 10 nhân.
 ## Những thứ cố ý không làm
 
 - **Client mobile và desktop.** Backend đã đủ để dùng lại mà không sửa gì.
-- **Cắt bỏ hash quá phổ biến.** `shazam stats` đo được phân bố tần suất, nhưng
-  kho hiện tại trung bình 1,09 dòng/hash nên chưa có đuôi dài để cắt. Quyết định
-  khi có kho thật.
-- **Chỉnh mật độ đỉnh.** 34 đỉnh/giây cao hơn khoảng mục tiêu 20–30, nhưng số này
-  đo trên nhạc tổng hợp tự sinh. Chỉnh theo nó là chỉnh theo artefact của chính
-  mình; để lại cho tới khi có nhạc thật.
+- **Cắt bỏ hash quá phổ biến.** Kho đủ 8 003 bài trung bình **12,65 dòng/hash**,
+  hash phổ biến nhất xuất hiện 616 lần. Tra cứu đã chiếm 79% thời gian query
+  nhưng tổng vẫn chỉ 0,26–0,58 s, còn xa ngưỡng 2 giây — nên chưa cắt. Đây là
+  chỗ cần xử lý đầu tiên nếu kho lớn hơn nữa.
+- **Chỉnh mật độ đỉnh.** Đo trên nhạc thật (12 bài FMA, 360 giây): **40,9
+  đỉnh/giây**, cao hơn khoảng ước lượng 20–30. Vẫn không chỉnh, nhưng nay là
+  quyết định có số liệu chứ không phải hoãn: mật độ cao làm kho phình 1,63 lần
+  (78,5 triệu vân tay thay vì 48 triệu) mà đổi lại khoảng cách giữa bài đúng và
+  bài sai rộng ra — bài đúng thấp nhất 222 điểm, bài lạ p95 chỉ 13. Đĩa thì
+  thừa, còn biên an toàn ấy thì đáng giá, nhất là với đoạn thu qua micro.
 - **Xác thực người dùng, triển khai công khai, CI/CD.**
 - **Làm mới số đếm ở `/api/health`.** Đếm một lần lúc khởi động rồi lưu đệm; sau
   khi dựng kho phải khởi động lại API mới thấy số mới. Đổi lại là `/health` không
-  bao giờ quét bảng 48 triệu dòng.
+  bao giờ quét bảng 78,5 triệu dòng.

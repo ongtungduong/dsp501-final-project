@@ -1,21 +1,40 @@
-# Minimal compose for development: PostgreSQL only.
-# Phase 7 extends this file with the `api` service and the packaged web build.
 services:
   db:
     image: postgres:18
     environment:
-      POSTGRES_DB: shazam
-      POSTGRES_USER: shazam
-      POSTGRES_PASSWORD: shazam
+      POSTGRES_DB: ${POSTGRES_DB:-shazam}
+      POSTGRES_USER: ${POSTGRES_USER:-shazam}
+      # No default. compose refuses to start without it rather than silently
+      # bringing up a database with a weak, publicly known password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — copy .env.example}
     ports: ["5432:5432"]
     # postgres:18+ expects a single mount at /var/lib/postgresql and places the
     # cluster in a version-specific subdirectory. Mounting .../data directly —
     # the pre-18 convention — makes the container exit on startup.
     volumes: ["pgdata:/var/lib/postgresql"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shazam"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shazam}"]
       interval: 5s
       retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shazam}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-shazam}
+      STATIC_DIR: /app/web/dist
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports: ["8000:8000"]
+    # The corpus is data, not code: ~15 GB of audio would make the image
+    # enormous and force a full rebuild for every source edit. Bind-mounted so
+    # the same files serve the host CLI and the container.
+    # Mounted at /app/data, not /data: the CLI's --songs-dir and --fma-dir
+    # default to paths relative to the working directory, so this is what makes
+    # `docker compose run --rm api shazam build` work with no extra flags.
+    volumes: ["./data:/app/data"]
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:

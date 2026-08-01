@@ -28,15 +28,19 @@ class LocalSource:
         if not root.exists():
             return
 
+        resolved_root = root.resolve()
         for path in sorted(root.rglob("*")):
             if path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES:
+                absolute = path.resolve()
                 yield TrackMeta(
                     title=path.stem,
                     artist=None,
-                    # Absolute, so the same file yields the same catalogue key
-                    # regardless of the working directory or whether the caller
-                    # passed a relative --songs-dir. The database's uniqueness
-                    # constraint on path is what makes a build resumable.
-                    path=path.resolve(),
+                    # Absolute for opening the file now...
+                    path=absolute,
                     source=self.name,
+                    # ...but the catalogue key is relative to this directory, so
+                    # it stays identical whether the build runs on the host or
+                    # inside the container where the same tree is mounted
+                    # elsewhere. See TrackMeta.catalogue_key.
+                    key=f"{self.name}:{absolute.relative_to(resolved_root).as_posix()}",
                 )

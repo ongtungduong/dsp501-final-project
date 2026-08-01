@@ -145,6 +145,11 @@ class FmaSource:
                 path=path.resolve(),
                 source=self.name,
                 genre=_clean(row[("track", "genre_top")]),
+                # The track id is already a stable catalogue-wide identifier, so
+                # the key needs nothing from the filesystem layout and stays the
+                # same on the host and inside the container. See
+                # TrackMeta.catalogue_key.
+                key=f"{self.name}:{int(track_id):06d}",
             )
             yielded += 1
 

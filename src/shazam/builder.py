@@ -154,7 +154,7 @@ def _select_pending(
     """Drop tracks already in the database so an interrupted build can resume."""
     pending: list[TrackMeta] = []
     for meta in tracks:
-        if str(meta.path) in already_built:
+        if meta.catalogue_key() in already_built:
             summary.skipped += 1
             continue
         pending.append(meta)
@@ -174,13 +174,12 @@ def _store(conn: psycopg.Connection, result: TrackResult, summary: BuildSummary)
         SongRecord(
             title=result.meta.title,
             artist=result.meta.artist,
-            # Resolved, not as given. The unique path is what makes a build
-            # resumable, so it has to be the same string no matter which
-            # directory the command ran from or whether --songs-dir was
-            # relative. Otherwise a rerun re-adds every track, and duplicate
-            # entries split the vote in matching until the ratio guard rejects
-            # a song that is in fact present.
-            path=str(result.meta.path.resolve()),
+            # The catalogue key, not a filesystem path. What is stored has to
+            # identify the same track from any machine and any mount point,
+            # because that uniqueness is what makes a build resumable and what
+            # stops a rerun from inserting duplicates. See
+            # TrackMeta.catalogue_key for why an absolute path fails at this.
+            path=result.meta.catalogue_key(),
             duration=result.duration,
             source=result.meta.source,
         ),

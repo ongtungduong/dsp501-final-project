@@ -243,3 +243,49 @@ def test_track_meta_is_frozen() -> None:
     meta = TrackMeta(title="T", artist=None, path=Path("x.mp3"), source="local")
     with pytest.raises(AttributeError):
         meta.title = "changed"  # type: ignore[misc]
+
+
+class TestCatalogueKeyStability:
+    """A track must be recognised as already-built from any machine.
+
+    The Docker workflow invites building from both the host and inside the
+    container, where the same audio tree is mounted at a different absolute
+    path. Keying the database on an absolute path made every track look new
+    there, so a second build inserted a duplicate of the entire corpus — and
+    duplicates split the offset histogram, tripping the runner-up guard so that
+    a song plainly in the corpus came back as "not found". Measured before the
+    fix: 20 songs from 10 files, and recognition of a known excerpt failing.
+    """
+
+    def test_local_key_is_independent_of_mount_point(self, tmp_path: Path) -> None:
+        host = tmp_path / "host" / "data" / "songs"
+        container = tmp_path / "app" / "data" / "songs"
+        for root in (host, container):
+            root.mkdir(parents=True)
+            (root / "song.wav").write_bytes(b"")
+
+        host_track = next(iter(LocalSource().tracks(host)))
+        container_track = next(iter(LocalSource().tracks(container)))
+
+        assert host_track.path != container_track.path
+        assert host_track.catalogue_key() == container_track.catalogue_key()
+        assert host_track.catalogue_key() == "local:song.wav"
+
+    def test_local_key_keeps_subdirectories_distinct(self, tmp_path: Path) -> None:
+        root = tmp_path / "songs"
+        for folder in ("rock", "jazz"):
+            (root / folder).mkdir(parents=True)
+            (root / folder / "same-name.wav").write_bytes(b"")
+
+        keys = {track.catalogue_key() for track in LocalSource().tracks(root)}
+
+        assert keys == {"local:rock/same-name.wav", "local:jazz/same-name.wav"}
+
+    def test_fma_key_is_the_track_id(self) -> None:
+        """FMA ids are catalogue-wide already, so the key needs no filesystem input."""
+        meta = TrackMeta(
+            title="T", artist=None, path=Path("/anywhere/000002.mp3"),
+            source="fma", key="fma:000002",
+        )
+
+        assert meta.catalogue_key() == "fma:000002"

@@ -1,0 +1,33 @@
+# Written before the Dockerfile, deliberately. The audio corpus under data/ is
+# around 15 GB once the archives are extracted; without this file Docker sends
+# all of it to the daemon as build context and the very first build appears to
+# hang before a single instruction runs.
+data/
+*.db
+
+# Build outputs and caches — regenerated inside the image
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+web/node_modules/
+web/dist/
+*.egg-info/
+
+# Version control and local tooling
+.git/
+.github/
+.claude/
+.gemini/
+.serena/
+plans/
+worktrees/
+
+# Local environment — must never reach an image
+.env
+*.pem
+
+# OS noise
+.DS_Store

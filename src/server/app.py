@@ -16,6 +16,7 @@ import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from server.logging_config import configure_logging
 from server.routes import AppDeps, router
@@ -153,6 +154,25 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"detail": "Lỗi máy chủ nội bộ."})
 
     app.include_router(router)
+
+    # Mounted last, and only when configured. A StaticFiles mount at "/" matches
+    # every path, so registering it before the router would swallow /api/* and
+    # return index.html for API calls. In the packaged image this serves the
+    # built web app, which is why the deployment needs no second service and no
+    # CORS configuration; in development Vite serves the client instead and this
+    # stays unset.
+    if settings.static_dir is not None:
+        if not settings.static_dir.is_dir():
+            raise RuntimeError(
+                f"STATIC_DIR points at {settings.static_dir}, which does not exist. "
+                "Build the web app first, or leave STATIC_DIR unset to run API-only."
+            )
+        app.mount(
+            "/",
+            StaticFiles(directory=settings.static_dir, html=True),
+            name="web",
+        )
+
     return app
 
 

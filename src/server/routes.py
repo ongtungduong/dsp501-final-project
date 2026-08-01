@@ -12,17 +12,17 @@ import time
 from dataclasses import dataclass
 from typing import Annotated
 
-import matplotlib
-
-matplotlib.use("Agg")  # Must be set before pyplot is imported; no display in a server process.
-
-import matplotlib.pyplot as plt
 import numpy as np
 import psycopg
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
+
+# Agg canvas attached per figure, so no global backend selection and no
+# pyplot import is needed at all.
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from psycopg_pool import ConnectionPool
 
@@ -75,6 +75,17 @@ class AppDeps:
 def _deps(request: Request) -> AppDeps:
     deps: AppDeps = request.app.state.deps
     return deps
+
+
+def _escape_like(term: str) -> str:
+    """Neutralise LIKE wildcards so a search term matches itself literally.
+
+    The query is parameterised, so this is not about injection — it is about
+    the search meaning what the user typed. Unescaped, ``%`` and ``_`` are
+    wildcards: searching for "50%" returns nonsense, and a bare ``%`` quietly
+    returns the entire catalogue and scans the whole table.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _audio_error_message(exc: AudioLoadError) -> str:
@@ -199,16 +210,20 @@ def list_songs(
     belongs.
     """
     deps = _deps(request)
-    pattern = f"%{q}%" if q else "%"
+    pattern = f"%{_escape_like(q)}%" if q else "%"
+
+    # Artist as well as title: the interface offers to search both, and with a
+    # catalogue of real performers title-only search is a visible lie.
+    where = r"(title ILIKE %s ESCAPE '\' OR coalesce(artist, '') ILIKE %s ESCAPE '\')"
 
     with deps.pool.connection() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) FROM songs WHERE title ILIKE %s", (pattern,))
+        cursor.execute(f"SELECT COUNT(*) FROM songs WHERE {where}", (pattern, pattern))
         total = int((cursor.fetchone() or [0])[0])
 
         cursor.execute(
-            "SELECT id, title, artist, duration FROM songs "
-            "WHERE title ILIKE %s ORDER BY id LIMIT %s OFFSET %s",
-            (pattern, limit, offset),
+            f"SELECT id, title, artist, duration FROM songs WHERE {where} "
+            "ORDER BY id LIMIT %s OFFSET %s",
+            (pattern, pattern, limit, offset),
         )
         rows = cursor.fetchall()
 
@@ -254,7 +269,15 @@ def _render_spectrogram(signal: NDArray[np.float32]) -> bytes:
     peaks = find_peaks(result.magnitude, _DSP_CONFIG)
     spectrum_db = 20.0 * np.log10(result.magnitude + 1e-10)
 
-    fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+    # Constructed directly rather than through pyplot. plt.subplots registers
+    # the figure in a process-global manager that only plt.close unregisters, so
+    # any exception between the two — a savefig failure, a bad scatter — leaks
+    # the figure for the life of the process. pyplot's state machine is also not
+    # thread-safe, and this runs in a worker thread. A bare Figure with its own
+    # canvas has no global registry, nothing to close, and nothing to contend on.
+    fig = Figure(figsize=(10, 4), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.subplots()
     duration = float(result.times[-1]) if result.times.size else 0.0
     nyquist = float(result.freqs[-1]) if result.freqs.size else 0.0
     ax.imshow(
@@ -276,7 +299,6 @@ def _render_spectrogram(signal: NDArray[np.float32]) -> bytes:
 
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png")
-    plt.close(fig)
     return buffer.getvalue()
 
 

@@ -9,6 +9,7 @@ transfer or depending on a remote server being up.
 from __future__ import annotations
 
 import hashlib
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -289,3 +290,47 @@ class TestCatalogueKeyStability:
         )
 
         assert meta.catalogue_key() == "fma:000002"
+
+
+class TestExtraction:
+    """The archive format is the landmine phase-03 warned only shows up at runtime.
+
+    FMA's zips store members with bzip2 compression (method 12), which the
+    system `unzip` refuses outright — it reports "need PK compat. v4.6". Python's
+    zipfile handles it natively, so extraction must go through zipfile and never
+    shell out. Nothing tested that until now.
+    """
+
+    @staticmethod
+    def _bzip2_zip(path: Path, members: dict[str, bytes]) -> None:
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_BZIP2) as zf:
+            for name, payload in members.items():
+                zf.writestr(name, payload)
+
+    def test_bzip2_members_extract(self, tmp_path: Path) -> None:
+        archive = tmp_path / "sample.zip"
+        self._bzip2_zip(archive, {"fma_small/000/000002.mp3": b"audio"})
+
+        with zipfile.ZipFile(archive) as zf:
+            assert {i.compress_type for i in zf.infolist()} == {zipfile.ZIP_BZIP2}
+            zf.extractall(tmp_path / "out")
+
+        assert (tmp_path / "out" / "fma_small" / "000" / "000002.mp3").read_bytes() == b"audio"
+
+    def test_extraction_sentinel_is_written_after_extraction_not_before(
+        self, tmp_path: Path
+    ) -> None:
+        """An interrupted extraction must not look complete on the next run.
+
+        Keying the skip on the output directory would be wrong: extractall
+        creates it when the first member lands, so a build interrupted partway
+        through 7 GB would silently yield a fraction of the catalogue, with the
+        missing tracks written off as ordinary metadata mismatches.
+        """
+        source = Path("src/shazam/sources/fma.py").read_text()
+
+        extract_at = source.index("zf.extractall(dest)")
+        sentinel_write = source.index("sentinel.write_text")
+        sentinel_check = source.index("if sentinel.exists():")
+
+        assert sentinel_check < extract_at < sentinel_write

@@ -94,13 +94,21 @@ class FmaSource:
                 archive_path = dest / archive.filename
                 _download_resumable(client, BASE_URL + archive.filename, archive_path, archive.sha1)
 
-                marker = dest / archive.extracted_marker
-                if marker.exists():
+                # A sentinel written only after extractall returns, rather than
+                # testing for the output directory. The directory appears the
+                # moment the first member is written, so an interrupted
+                # extraction — Ctrl-C or a full disk partway through 7 GB —
+                # would look complete on the next run. The catalogue would then
+                # be built from whatever fraction of the tracks made it, and
+                # tracks() would report the rest as ordinary metadata mismatches.
+                sentinel = dest / f".{archive.filename}.extracted"
+                if sentinel.exists():
                     print(f"{archive.filename}: already extracted, skipping")
                     continue
                 print(f"Extracting {archive.filename}...")
                 with zipfile.ZipFile(archive_path) as zf:
                     zf.extractall(dest)
+                sentinel.write_text(archive.sha1)
 
     def tracks(self, root: Path) -> Iterator[TrackMeta]:
         """Yield every ``fma_small`` track that has both an audio file and metadata.

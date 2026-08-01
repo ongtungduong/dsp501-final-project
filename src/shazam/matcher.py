@@ -15,11 +15,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import psycopg
 
 from shazam.config import DspConfig, MatchConfig
 from shazam.database import fetch_song, lookup_histogram
+
+# Closed set, so the API contract and the web client can both pin it rather
+# than passing an open string that renders as "undefined" if a band is added.
+type MatchStrength = Literal["strong", "moderate", "weak"]
 
 
 @dataclass(frozen=True)
@@ -63,7 +68,7 @@ class MatchResult:
     artist: str | None
     score: int
     aligned_fraction: float
-    strength: str
+    strength: MatchStrength
     offset_seconds: float
 
 
@@ -75,7 +80,7 @@ STRONG_SCORE = 100
 MODERATE_SCORE = 30
 
 
-def match_strength(score: int) -> str:
+def match_strength(score: int) -> MatchStrength:
     """Describe how firmly a match is established."""
     if score >= STRONG_SCORE:
         return "strong"

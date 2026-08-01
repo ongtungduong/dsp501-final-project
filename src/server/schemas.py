@@ -7,6 +7,8 @@ client) get the casing they expect without leaking it into the Python side.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
@@ -25,7 +27,7 @@ class MatchInfo(ApiModel):
     artist: str | None
     score: int
     aligned_fraction: float
-    strength: str
+    strength: Literal["strong", "moderate", "weak"]
     offset_seconds: float
 
 

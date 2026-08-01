@@ -71,7 +71,9 @@ export function SongList() {
                   <tr key={song.id}>
                     <td>{song.title}</td>
                     <td>{song.artist ?? 'Không rõ'}</td>
-                    <td>{formatSeconds(song.duration)}</td>
+                    {/* An unknown duration shows as a gap, not as 0:00 —
+                        a plausible wrong number is worse than a visible blank. */}
+                    <td>{song.duration === null ? '—' : formatSeconds(song.duration)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -126,6 +126,37 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
+    async def _reject_oversized_bodies(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Refuse a too-large upload before its body is read.
+
+        Checking inside the endpoint is too late to be worth much: FastAPI
+        resolves an ``UploadFile`` by parsing the whole multipart body first,
+        which streams the entire payload to a temporary file before the handler
+        runs. Measured on this code, a 50 MB upload against a 10 MB ceiling was
+        accepted in full — nine seconds of bandwidth and 50 MB of temp disk —
+        and only then answered 413.
+
+        The declared length is not trustworthy on its own, and a chunked request
+        has none at all, so the endpoint keeps its own check as the backstop.
+        This just stops the honest, common case cheaply.
+        """
+        declared = request.headers.get("content-length")
+        too_large = (
+            declared is not None
+            and declared.isdigit()
+            and int(declared) > settings.max_upload_bytes
+        )
+        if too_large:
+            limit_mb = settings.max_upload_bytes / (1024 * 1024)
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Tệp quá lớn, tối đa {limit_mb:.0f} MB."},
+            )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def _bind_request_context(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:

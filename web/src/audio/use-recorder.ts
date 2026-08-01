@@ -46,6 +46,9 @@ export function useRecorder({ seconds = DEFAULT_SECONDS, onComplete }: UseRecord
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const chunksRef = useRef<Float32Array[]>([])
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Incremented by teardown so a start() suspended at an await can tell that
+  // its session was abandoned and release the microphone itself.
+  const generationRef = useRef(0)
   // onComplete is likely a fresh closure on every render — stash it in a ref
   // so the recording callbacks below don't need it in their dependency array.
   const onCompleteRef = useRef(onComplete)
@@ -73,6 +76,8 @@ export function useRecorder({ seconds = DEFAULT_SECONDS, onComplete }: UseRecord
       void audioContextRef.current.close()
     }
     audioContextRef.current = null
+    // Invalidate any start() still suspended at an await.
+    generationRef.current += 1
   }, [])
 
   const finish = useCallback(() => {
@@ -91,6 +96,16 @@ export function useRecorder({ seconds = DEFAULT_SECONDS, onComplete }: UseRecord
         offset += chunk.length
       }
       onCompleteRef.current(encodeWav(merged, sampleRateAtCapture))
+    } else {
+      // Reachable when the audio context never started producing callbacks.
+      // Saying so is essential: the alternative is the user watching the
+      // countdown run to zero and then nothing happening at all — no result,
+      // no error, no reason. Silence is the one outcome this interface must
+      // never produce.
+      setError(
+        'Không thu được âm thanh nào. Kiểm tra micro trong System Settings › ' +
+          'Privacy & Security › Microphone, rồi thử lại.',
+      )
     }
     setState('idle')
   }, [teardown, setState])
@@ -110,24 +125,62 @@ export function useRecorder({ seconds = DEFAULT_SECONDS, onComplete }: UseRecord
     chunksRef.current = []
     setState('requesting')
 
+    // Bumped on teardown so an in-flight start() knows it was cancelled. The
+    // async work below suspends at two awaits; without this, unmounting during
+    // either one leaves the microphone open, because teardown runs while every
+    // ref is still null and therefore has nothing to release.
+    const generation = ++generationRef.current
+    const cancelled = () => generationRef.current !== generation
+
     void (async () => {
       let stream: MediaStream
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream = await navigator.mediaDevices.getUserMedia({
+          // Browsers enable echo cancellation, noise suppression and automatic
+          // gain control by default for microphone tracks. All three are signal
+          // processing applied before the samples reach us, and all three fight
+          // this specific task: AGC applies a time-varying gain that the
+          // server's static normalisation cannot undo, noise suppression
+          // attenuates exactly the steady tonal partials that peak picking
+          // selects, and echo cancellation actively removes audio correlated
+          // with what the machine is playing — which is the demo, music from a
+          // nearby speaker. Design decision #1 says the browser sends raw
+          // samples; this is what makes that true in practice.
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        })
       } catch (err) {
         setState('idle')
         setError(describeGetUserMediaError(err))
         return
       }
+
+      if (cancelled()) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       streamRef.current = stream
 
       try {
-        // AudioContext must be created inside a user-gesture handler (the
-        // click that triggered `start`) — browsers keep it suspended
-        // otherwise and it never produces audio callbacks.
         const context = new AudioContext()
         audioContextRef.current = context
+        // Creating the context after an await breaks the synchronous
+        // user-gesture chain, so it can start suspended — and a suspended
+        // context never calls process(), which would leave the recording empty
+        // with no error anywhere. Resuming explicitly costs nothing when the
+        // context is already running.
+        if (context.state === 'suspended') {
+          await context.resume()
+        }
         await context.audioWorklet.addModule(recorderWorkletUrl)
+
+        if (cancelled()) {
+          teardown()
+          return
+        }
 
         const source = context.createMediaStreamSource(stream)
         sourceRef.current = source

@@ -17,6 +17,8 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
+
 from shazam import database
 from shazam.audio import AudioLoadError, load
 from shazam.builder import build
@@ -118,6 +120,16 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         source.fetch(args.dest)
     except FmaSourceError as exc:
         print(f"Download failed: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nInterrupted. Run `shazam fetch` again to resume.", file=sys.stderr)
+        return 130
+    except (httpx.HTTPError, OSError) as exc:
+        # A multi-gigabyte transfer fails in ways that are entirely ordinary —
+        # the connection drops, the disk fills — and none of them deserve a
+        # traceback on a command whose whole job is a long, fragile download.
+        print(f"Download failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print("Partial progress is kept — run `shazam fetch` again to resume.", file=sys.stderr)
         return 1
 
     print(f"Done. Run `shazam build --source {args.source}` to fingerprint it.")

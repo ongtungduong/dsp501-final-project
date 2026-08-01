@@ -12,6 +12,7 @@ wiring: it satisfies :class:`shazam.sources.MusicSource` the same way
 from __future__ import annotations
 
 import hashlib
+import time
 import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -31,6 +32,10 @@ from shazam.sources import TrackMeta
 BASE_URL = "https://os.unil.cloud.switch.ch/fma/"
 # 1 MiB: large enough that per-chunk overhead is negligible against a 7.2 GiB
 # transfer, small enough for the progress line to update responsively.
+# The FMA host closes long transfers regularly; each attempt resumes.
+MAX_TRANSFER_ATTEMPTS = 200
+RETRY_DELAY_SECONDS = 5.0
+
 CHUNK_SIZE = 1024 * 1024
 
 
@@ -207,8 +212,9 @@ def _download_resumable(client: httpx.Client, url: str, path: Path, expected_sha
         expected_sha1: Published checksum the finished file must match.
 
     Raises:
-        FmaSourceError: The finished download's SHA1 does not match. The
-            file is deleted before raising.
+        FmaSourceError: The finished download's SHA1 does not match (the file is
+            deleted before raising), or the transfer kept failing after
+            ``MAX_TRANSFER_ATTEMPTS`` resumed attempts.
     """
     remote_size = _remote_size(client, url)
     local_size = path.stat().st_size if path.exists() else 0
@@ -219,7 +225,53 @@ def _download_resumable(client: httpx.Client, url: str, path: Path, expected_sha
             return
         print(f"{path.name}: local file complete but checksum mismatch, redownloading")
         local_size = 0
+        path.unlink(missing_ok=True)
 
+    # A single attempt effectively never finishes a multi-gigabyte transfer:
+    # observed on the real FMA host, the connection is closed mid-body after a
+    # few hundred megabytes ("peer closed connection without sending complete
+    # message body"). Each attempt re-reads what is already on disk and asks
+    # only for the remainder, so an interrupted transfer costs a reconnect
+    # rather than everything downloaded so far.
+    for attempt in range(1, MAX_TRANSFER_ATTEMPTS + 1):
+        local_size = path.stat().st_size if path.exists() else 0
+        if local_size >= remote_size:
+            break
+
+        try:
+            _transfer(client, url, path, local_size, remote_size)
+            break
+        except (httpx.HTTPError, OSError) as exc:
+            if attempt == MAX_TRANSFER_ATTEMPTS:
+                raise FmaSourceError(
+                    f"{path.name}: transfer failed after {attempt} attempts ({exc}). "
+                    f"Partial file kept — run `shazam fetch` again to continue."
+                ) from exc
+            got = path.stat().st_size if path.exists() else 0
+            print(
+                f"\n{path.name}: attempt {attempt} interrupted at "
+                f"{got / 1_000_000:.0f}/{remote_size / 1_000_000:.0f} MB ({exc}); resuming",
+                flush=True,
+            )
+            time.sleep(RETRY_DELAY_SECONDS)
+
+    actual_sha1 = _sha1_of(path)
+    if actual_sha1 != expected_sha1:
+        path.unlink()
+        raise FmaSourceError(
+            f"{path.name}: SHA1 mismatch (expected {expected_sha1}, got {actual_sha1}) "
+            "— file deleted, re-run to try again"
+        )
+
+
+def _transfer(
+    client: httpx.Client,
+    url: str,
+    path: Path,
+    local_size: int,
+    remote_size: int,
+) -> None:
+    """Stream one attempt at the remaining bytes onto ``path``."""
     resuming = local_size > 0
     headers = {"Range": f"bytes={local_size}-"} if resuming else {}
     if resuming:
@@ -241,20 +293,23 @@ def _download_resumable(client: httpx.Client, url: str, path: Path, expected_sha
                 _print_progress(path.name, downloaded, remote_size)
     print()
 
-    actual_sha1 = _sha1_of(path)
-    if actual_sha1 != expected_sha1:
-        path.unlink()
-        raise FmaSourceError(
-            f"{path.name}: SHA1 mismatch (expected {expected_sha1}, got {actual_sha1}) "
-            "— file deleted, re-run to try again"
-        )
-
 
 def _remote_size(client: httpx.Client, url: str) -> int:
-    """Content-Length of ``url``, via HEAD."""
+    """Content-Length of ``url``, via HEAD.
+
+    Raises:
+        FmaSourceError: The server refuses HEAD or declines to state a length.
+            Resuming needs the total size, so there is nothing sensible to do
+            without it — but the caller deserves that sentence rather than a
+            ``KeyError: 'content-length'`` traceback.
+    """
     response = client.head(url)
     response.raise_for_status()
-    return int(response.headers["content-length"])
+
+    declared = response.headers.get("content-length")
+    if declared is None or not declared.isdigit():
+        raise FmaSourceError(f"{url}: server did not report a size, cannot resume safely")
+    return int(declared)
 
 
 def _sha1_of(path: Path) -> str:

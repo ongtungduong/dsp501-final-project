@@ -109,7 +109,10 @@ uv run python scripts/benchmark_pipeline.py data/queries/q-10s.wav
 
 **Không xin được quyền micro trên macOS.** System Settings › Privacy & Security ›
 Microphone, bật cho trình duyệt. Trình duyệt chỉ cho dùng micro ở *secure
-context*; `localhost` được miễn nên demo trên máy tính không vướng.
+context*; `localhost` được miễn nên demo trên máy tính không vướng. Desktop
+app dùng tkinter nên thuộc quyền của Terminal / `python3` — xem
+[`desktop-app/README.md`](desktop-app/README.md) để biết cách cấp trên từng
+hệ điều hành.
 
 **Muốn demo từ điện thoại.** Cần HTTPS. Dựng đường hầm tạm:
 
@@ -142,11 +145,27 @@ docker compose restart api
 **Đổi tham số DSP rồi thì phải dựng lại kho.** Vân tay cũ tính theo tham số cũ,
 trộn hai loại vào một kho thì không khớp được.
 
+## Desktop app
+
+Python tkinter, ghi âm rồi gửi clip lên API. Cùng hai endpoint mà web
+client dùng — `POST /api/match` và `POST /api/spectrogram` — nên backend
+không cần biết client nào đang gọi.
+
+```bash
+uv pip install -r desktop-app/requirements.txt
+python desktop-app/app.py
+```
+
+Ô **API URL** ở thanh trên cùng cho phép trỏ sang server khác
+(cổng khác, máy khác). Cũng đặt được bằng `API_BASE_URL` trong `.env`
+hoặc biến môi trường. Chi tiết quyền micro theo hệ điều hành và xử lý
+lỗi trong [`desktop-app/README.md`](desktop-app/README.md).
+
 ## Phạm vi
 
-Bản này gồm lõi DSP, backend và web app. Client mobile/desktop không nằm trong
-phạm vi — backend đã đủ để các client đó dùng lại mà không phải sửa gì phía
-server.
+Bản này gồm lõi DSP, backend, web app và desktop client. Tất cả client
+đều gọi chung hai endpoint HTTP ở `src/server/routes.py` — backend
+không phân biệt client nào đang nói chuyện với nó.
 
 Hạn chế cố hữu của thuật toán: không nhận được bản cover, hát lại hay remix
 (vân tay bám vào đúng bản ghi cụ thể), và nhạy với thay đổi tốc độ phát. Chi tiết

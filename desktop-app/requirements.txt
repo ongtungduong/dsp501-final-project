@@ -1,0 +1,8 @@
+# Desktop app dependencies (kept separate from the server's pyproject).
+
+# The server already pins sounddevice and numpy in pyproject.toml — these
+# mirror that contract so the desktop app can be installed in isolation.
+sounddevice>=0.5.5
+numpy>=2.5
+requests>=2.32
+pillow>=11.0

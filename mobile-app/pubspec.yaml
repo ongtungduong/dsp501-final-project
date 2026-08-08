@@ -1,0 +1,37 @@
+name: shazam_mobile
+description: "Flutter client for the Shazam audio-fingerprinting backend (DSP501)."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Microphone capture + WAV encoding. The plugin handles sample rate,
+  # channel count, and the WAV header on Android and iOS.
+  record: ^6.2.1
+
+  # Resolve a writable temp directory for the WAV file the `record`
+  # plugin produces. Required because `start()` needs a real path.
+  path_provider: ^2.1.4
+
+  # Permission prompt for the microphone. Android 6+ requires a runtime
+  # prompt; iOS requires a usage description in Info.plist.
+  permission_handler: ^11.3.1
+
+  # Multipart upload. Kept tiny and dependency-free — no need for dio
+  # for two POSTs.
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

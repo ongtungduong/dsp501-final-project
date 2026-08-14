@@ -103,46 +103,57 @@ class _HomeScreenState extends State<HomeScreen> {
       _status = 'Đang gửi lên server…';
     });
 
-    final List<int> wavBytes;
     try {
-      wavBytes = await _recorder.stop();
-    } on RecorderError catch (e) {
-      _showError('Lỗi ghi âm', e.message);
-      return;
-    } catch (e, st) {
-      debugPrint('Unexpected stop error: $e\n$st');
-      _showError('Lỗi không mong đợi', e.toString());
-      return;
-    }
-
-    if (wavBytes.isEmpty) {
-      _showError('Không có dữ liệu', 'Micro không trả về dữ liệu.');
-      return;
-    }
-
-    try {
-      final match = await _api.matchAudio(wavBytes);
-      if (!mounted) return;
-      setState(() {
-        _match = match;
-        _status = match.match == null ? 'Không nhận ra bài nào.' : 'Xong.';
-      });
-
-      // Spectrogram is purely cosmetic — do not fail the whole flow if
-      // it errors out. The match verdict is already on screen.
+      final List<int> wavBytes;
       try {
-        final png = await _api.getSpectrogram(wavBytes);
-        if (!mounted) return;
-        setState(() => _spectrogramBytes = png);
-      } on ApiError catch (e) {
-        if (!mounted) return;
-        _setStatus('Đã nhận diện nhưng lỗi khi tải spectrogram: ${e.message}');
+        wavBytes = await _recorder.stop();
+      } on RecorderError catch (e) {
+        _showError('Lỗi ghi âm', e.message);
+        return;
+      } catch (e, st) {
+        debugPrint('Unexpected stop error: $e\n$st');
+        _showError('Lỗi không mong đợi', e.toString());
+        return;
       }
-    } on ApiError catch (e) {
-      _showError('Lỗi máy chủ', e.message);
-    } catch (e, st) {
-      debugPrint('Unexpected match error: $e\n$st');
-      _showError('Lỗi không mong đợi', e.toString());
+
+      if (wavBytes.isEmpty) {
+        _showError('Không có dữ liệu', 'Micro không trả về dữ liệu.');
+        return;
+      }
+
+      try {
+        final match = await _api.matchAudio(wavBytes);
+        if (!mounted) return;
+        setState(() {
+          _match = match;
+          _status = match.match == null ? 'Không nhận ra bài nào.' : 'Xong.';
+        });
+
+        // Spectrogram is purely cosmetic — do not fail the whole flow if
+        // it errors out. The match verdict is already on screen.
+        try {
+          final png = await _api.getSpectrogram(wavBytes);
+          if (!mounted) return;
+          setState(() => _spectrogramBytes = png);
+        } on ApiError catch (e) {
+          if (!mounted) return;
+          _setStatus('Đã nhận diện nhưng lỗi khi tải spectrogram: ${e.message}');
+        }
+      } on ApiError catch (e) {
+        _showError('Lỗi máy chủ', e.message);
+      } catch (e, st) {
+        debugPrint('Unexpected match error: $e\n$st');
+        _showError('Lỗi không mong đợi', e.toString());
+      }
+    } finally {
+      // Every exit path has to hand the button back, including the ones
+      // that succeed. Resetting only inside the error handler left the
+      // app recognising exactly once per launch: the button stayed
+      // `busy` and the API URL field stayed disabled after the first
+      // match. A `finally` cannot be forgotten by a future early return.
+      if (mounted && _buttonState != RecordButtonState.ready) {
+        setState(() => _buttonState = RecordButtonState.ready);
+      }
     }
   }
 

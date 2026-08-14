@@ -101,6 +101,7 @@ lib/
     spectrogram_view.dart      PNG bytes -> Image.memory
 test/
   match_result_test.dart       parse JSON, strength enum, edge cases
+  widget_test.dart             RecordButton: nhãn + khoá nút theo trạng thái
 android/
   app/src/main/AndroidManifest.xml    RECORD_AUDIO + INTERNET
 ios/

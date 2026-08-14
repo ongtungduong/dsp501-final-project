@@ -163,14 +163,14 @@ Quyết định này còn kéo theo hai chỗ dễ bỏ sót:
 
 #### Ba client, ba đường thu âm khác nhau
 
-Chỉ web client làm đúng quyết định này. Hai client kia lệch, mỗi bên một kiểu:
+Ba client giờ thống nhất ở phần hiệu ứng micro, còn lệch ở tần số và độ dài:
 
 | | web | desktop | mobile |
 |---|---|---|---|
 | Tần số thu | **gốc của thiết bị** | ép 22 050 Hz | ép 22 050 Hz |
 | Độ dài | 8 s | 5 s | 6 s |
 | Chuẩn hoá phía client | không | đỉnh (hệ số tĩnh) | không |
-| AGC / noise supp. / echo cancel | **tắt cả ba** | không đụng tới | **bật cả ba** |
+| AGC / noise supp. / echo cancel | **tắt cả ba** | không đụng tới | **tắt cả ba** |
 | Xin spectrogram | khi người dùng tích chọn | luôn luôn | luôn luôn |
 
 **Ép tần số (desktop và mobile).** Thiết bị hiếm khi chạy sẵn ở 22 050 Hz, nên
@@ -185,20 +185,20 @@ không đo lại đúng là kiểu thay đổi "vẫn chạy" nhưng âm thầm 
 đúng cái bẫy mà cả quyết định này được viết ra để tránh. Điều kiện để làm: đo tỷ
 lệ nhận diện trước và sau, trên micro thật với kho đã dựng.
 
-**Mobile bật cả ba hiệu ứng — đây là chỗ lệch nặng nhất.**
-`recorder_service.dart` đặt `autoGain: true`, `echoCancel: true`,
-`noiseSuppress: true`, đúng ba thứ mà gạch đầu dòng trên vừa giải thích vì sao
-phải tắt. Chúng không phải chuyện thẩm mỹ: AGC đổi độ lợi **theo thời gian** nên
-chuẩn hoá tĩnh phía server không gỡ lại được, noise suppression làm yếu đúng các
-thành phần tông ổn định mà peak picking chọn, và echo cancellation triệt phần âm
-thanh tương quan với thứ máy đang phát — tức đúng kịch bản demo, khi điện thoại
-nghe nhạc phát từ loa gần đó. Nghịch lý: `config.dart` có sẵn ghi chú
-"We do not resample on the client — see `docs/kien-truc.md` design decision #1",
-nên phần *resample* thì có ý thức làm đúng, còn phần *hiệu ứng* thì không.
+**Mobile từng bật cả ba hiệu ứng — đã tắt.** `recorder_service.dart` khởi đầu đặt
+`autoGain: true`, `echoCancel: true`, `noiseSuppress: true`, đúng ba thứ mà gạch
+đầu dòng trên vừa giải thích vì sao phải tắt. Nghịch lý là `config.dart` có sẵn
+ghi chú "We do not resample on the client — see `docs/kien-truc.md` design
+decision #1": phần *resample* có ý thức làm đúng, còn phần *hiệu ứng* thì lọt.
+Nay cả ba là `false`, khớp với web client.
 
-Cũng **chưa đo** ảnh hưởng. Ba hiệu ứng này thường bị bỏ qua trên emulator (mã có
-ghi chú đúng điều đó), nên thử trên emulator sẽ không thấy vấn đề — chỉ máy thật
-mới lộ.
+Đây là chỗ sửa được mà không cần đo trước, khác với chuyện ép tần số ở trên: cả
+ba hiệu ứng đều được chỉnh cho **tiếng nói**, mà nhận diện nhạc không phải tiếng
+nói, nên không có kịch bản nào chúng giúp ích. Ngược lại, ép tần số đổi *một*
+đường xử lý lấy *một* đường khác — muốn biết đường nào tốt hơn thì phải đo.
+
+Chưa có số đo trước/sau cho lần sửa này, và cũng khó có: emulator thường bỏ qua
+cả ba hiệu ứng nên không phân biệt được, phải máy thật mới thấy khác.
 
 **Chuẩn hoá đỉnh phía desktop thì không phải vấn đề tương tự.**
 `signal_to_wav_bytes` chia tín hiệu cho biên độ đỉnh trước khi lượng tử hoá xuống
@@ -347,8 +347,9 @@ Node 24.15.0. Máy 10 nhân.
 - **Đóng gói client thành file chạy được.** Desktop không có PyInstaller, py2app
   hay spec nào trong repo — chạy bằng `python desktop-app/app.py`. Mobile cũng
   chưa có bản dựng phát hành, chỉ `flutter run`.
-- **Thống nhất tham số thu âm giữa ba client.** Biết là lệch, đã ghi ở quyết
-  định #1, nhưng chưa gộp vì chưa đo được cái nào tốt hơn cái nào.
+- **Thống nhất tần số và độ dài đoạn thu giữa ba client.** Phần hiệu ứng micro
+  đã gộp (cả ba client đều tắt), nhưng tần số và độ dài thì chưa: biết là lệch,
+  đã ghi ở quyết định #1, chưa gộp vì chưa đo được cái nào tốt hơn cái nào.
 - **Cắt bỏ hash quá phổ biến.** Kho đủ 8 003 bài trung bình **12,65 dòng/hash**,
   hash phổ biến nhất xuất hiện 616 lần. Tra cứu đã chiếm 79% thời gian query
   nhưng tổng vẫn chỉ 0,26–0,58 s, còn xa ngưỡng 2 giây — nên chưa cắt. Đây là

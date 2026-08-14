@@ -116,7 +116,7 @@ ios/
 | Channels | 1 (mono) | Stereo không tăng độ chính xác khớp |
 | Duration | 6 giây | Đủ hash cho matcher, không chán đợi |
 | Encoder | WAV PCM 16-bit | Server decode qua `soundfile`, opus bị reject |
-| AutoGain / EchoCancel / NoiseSuppress | bật | Cải thiện chất lượng micro điện thoại |
+| AutoGain / EchoCancel / NoiseSuppress | **tắt** | Chỉnh cho tiếng nói, phá vân tay nhạc — xem [quyết định #1](../docs/kien-truc.md) |
 
 ## Lỗi thường gặp
 

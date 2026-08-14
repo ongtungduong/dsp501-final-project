@@ -93,20 +93,33 @@ class RecorderService {
     final stamp = DateTime.now().millisecondsSinceEpoch;
     final path = '${dir.path}/shazam_query_$stamp.wav';
 
-    // Effects (autoGain/echoCancel/noiseSuppress) are silently dropped
-    // on hardware that does not advertise them — most emulators fall in
-    // that bucket (the plugin logs "not available" and continues). Keep
-    // them enabled for real devices; the request still succeeds without
-    // them. Sample rate and channel count drive the WAV header the
-    // server decodes, so they MUST match the matcher build.
+    // All three voice-processing effects stay OFF, matching the web
+    // client and design decision #1 in docs/kien-truc.md. Each one is
+    // signal processing applied before we ever see a sample, and each
+    // breaks fingerprinting in its own way:
+    //
+    //   autoGain      changes gain over time, so the server's static
+    //                 peak normalisation cannot undo it.
+    //   noiseSuppress attenuates exactly the steady tonal components
+    //                 that peak picking selects.
+    //   echoCancel    suppresses audio correlated with what the device
+    //                 is playing — which is the demo scenario itself,
+    //                 a phone listening to music from a nearby speaker.
+    //
+    // These are tuned for speech, and music recognition is not speech.
+    // Note that emulators usually drop the effects anyway, so testing
+    // there would not have shown the difference either way.
+    //
+    // Sample rate and channel count drive the WAV header the server
+    // decodes, so they MUST match the matcher build.
     const config = RecordConfig(
       encoder: AudioEncoder.wav,
       sampleRate: sampleRate,
       numChannels: channels,
       bitRate: 256000, // ignored for WAV but required by the API
-      autoGain: true,
-      echoCancel: true,
-      noiseSuppress: true,
+      autoGain: false,
+      echoCancel: false,
+      noiseSuppress: false,
     );
 
     try {

@@ -39,9 +39,11 @@ DEFAULT_API_BASE = "http://127.0.0.1:8000"
 MATCH_PATH = "/api/match"
 SPECTROGRAM_PATH = "/api/spectrogram"
 
-# Capture parameters. Five seconds is what the web client uses too — long
-# enough to give the fingerprint matcher enough hashes to score against,
-# short enough that the user does not get bored waiting.
+# Capture parameters. Five seconds is long enough to give the matcher hashes to
+# score against, short enough that the user does not get bored waiting. Note
+# this is shorter than the web client and `shazam listen`, which both record 8
+# seconds: a shorter clip yields fewer hashes and therefore a lower score, and
+# microphone audio already scores lowest of any query type.
 SAMPLE_RATE = 22_050
 CHANNELS = 1
 DURATION_SECONDS = 5.0

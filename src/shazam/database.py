@@ -1,14 +1,14 @@
 """PostgreSQL storage for fingerprints: schema, bulk load, and lookup.
 
-Scale drives every choice here. Eight thousand tracks produce roughly 48 million
-fingerprint rows, which is the difference between "any approach works" and
-"only the right one finishes":
+Scale drives every choice here. The full corpus of 8003 tracks measured 78.5
+million fingerprint rows, which is the difference between "any approach works"
+and "only the right one finishes":
 
 * Rows are loaded with binary ``COPY``, never ``executemany``. Each row through
   ``executemany`` costs a parse and a round trip; ``COPY`` streams bytes
   straight into the server and runs orders of magnitude faster.
-* The hash index is built *after* loading. Maintaining a b-tree across 48
-  million inserts is far slower than sorting once at the end.
+* The hash index is built *after* loading. Maintaining a b-tree across tens of
+  millions of inserts is far slower than sorting once at the end.
 * ``hash`` is ``BIGINT``. See :data:`HASH_COLUMN_TYPE`.
 """
 
@@ -102,13 +102,13 @@ def create_index(conn: psycopg.Connection) -> None:
     The hash index carries ``song_id`` and ``offset`` as INCLUDE columns so
     lookups are satisfied entirely from the index. Without them, a query
     matching hundreds of thousands of rows has to visit that many scattered
-    positions in a 1.9 GB heap; with them, the heap is never touched. The extra
-    payload costs roughly a gigabyte of disk and is the difference between
-    meeting and missing the two-second target at full corpus size.
+    positions in a 3.3 GB heap; with them, the heap is never touched. The extra
+    payload costs disk and is the difference between meeting and missing the
+    two-second target at full corpus size.
 
     ``song_id`` gets its own index because the foreign key cascades on delete,
     and an unindexed child column turns removing one track into a scan of all
-    48 million rows.
+    78.5 million rows.
 
     ``maintenance_work_mem`` is raised first: sorting tens of millions of keys
     in the default 64 MB work area spills to disk and takes far longer.

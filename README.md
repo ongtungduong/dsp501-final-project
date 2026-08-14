@@ -161,11 +161,31 @@ python desktop-app/app.py
 hoặc biến môi trường. Chi tiết quyền micro theo hệ điều hành và xử lý
 lỗi trong [`desktop-app/README.md`](desktop-app/README.md).
 
+## Mobile app
+
+Flutter, chạy trên Android và iOS. Cũng chỉ gọi đúng hai endpoint như
+hai client kia.
+
+```bash
+cd mobile-app && flutter pub get
+flutter run --dart-define=API_BASE_URL=http://<IP-máy-chủ>:8000
+```
+
+Mặc định là `http://10.0.2.2:8000` — địa chỉ máy host nhìn từ emulator
+Android. Chạy trên máy thật thì phải trỏ sang IP thật của máy chủ, đặt
+lúc build bằng `--dart-define` hoặc sửa trong ô **API URL** ngay trên
+màn hình. Chi tiết trong [`mobile-app/README.md`](mobile-app/README.md).
+
 ## Phạm vi
 
-Bản này gồm lõi DSP, backend, web app và desktop client. Tất cả client
-đều gọi chung hai endpoint HTTP ở `src/server/routes.py` — backend
-không phân biệt client nào đang nói chuyện với nó.
+Bản này gồm lõi DSP, backend, web app, desktop client và mobile client.
+Tất cả client đều gọi chung hai endpoint HTTP ở `src/server/routes.py` —
+backend không phân biệt client nào đang nói chuyện với nó, và thêm hai
+client sau không phải sửa một dòng nào trong `src/`.
+
+Ba client **thu âm không giống nhau** (tần số, độ dài, hiệu ứng micro).
+Khác biệt đó ảnh hưởng tới chất lượng nhận diện và được ghi lại ở
+[quyết định #1](docs/kien-truc.md).
 
 Hạn chế cố hữu của thuật toán: không nhận được bản cover, hát lại hay remix
 (vân tay bám vào đúng bản ghi cụ thể), và nhạy với thay đổi tốc độ phát. Chi tiết

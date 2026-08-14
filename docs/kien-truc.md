@@ -12,18 +12,20 @@ nhạc (FMA / data/songs) ──build, 10 tiến trình──▶ PostgreSQL
   web/ React + Vite + TS ─┐                            │
    thu 8 s, tần số gốc    │                   src/shazam/  (lõi DSP)
                           │  POST /api/match  ├ audio.py    load → mono → 11025 Hz
-                          ├──▶               ─┤ stft.py     STFT tự cài
-                          │  POST /api/spec…  ├ peaks.py    constellation map
+  desktop-app/ tkinter    ├──▶               ─┤ stft.py     STFT tự cài
+   thu 5 s, 22 050 Hz     │  POST /api/spec…  ├ peaks.py    constellation map
                           │      FastAPI ─────┤ hashing.py  cặp đỉnh → hash 32-bit
-  desktop-app/ tkinter    │                   ├ database.py psycopg3, COPY, schema
-   thu 5 s, 22 050 Hz ────┘                   └ matcher.py  histogram → điểm khớp
+  mobile-app/ Flutter     │                   ├ database.py psycopg3, COPY, schema
+   thu 6 s, 22 050 Hz ────┘                   └ matcher.py  histogram → điểm khớp
 
 đóng gói: docker compose → db (postgres:18) + api (FastAPI phục vụ luôn web/dist)
 ```
 
-Hai client, một backend. Cả hai chỉ gọi `POST /api/match` và `POST /api/spectrogram`;
-server không biết và không cần biết bên kia là trình duyệt hay tkinter. Nhưng hai
-client **thu âm khác nhau** — xem [quyết định #1](#1-toàn-bộ-resample-nằm-ở-server-qua-đúng-một-bộ-lọc).
+Ba client, một backend. Cả ba chỉ gọi `POST /api/match` và `POST /api/spectrogram`;
+server không biết và không cần biết bên kia là trình duyệt, tkinter hay Flutter —
+thêm hai client sau không phải sửa một dòng nào trong `src/`. Nhưng ba client
+**thu âm khác nhau**, và khác theo cách ảnh hưởng tới chất lượng nhận diện:
+xem [quyết định #1](#1-toàn-bộ-resample-nằm-ở-server-qua-đúng-một-bộ-lọc).
 
 ## Trách nhiệm từng module
 
@@ -42,6 +44,7 @@ client **thu âm khác nhau** — xem [quyết định #1](#1-toàn-bộ-resampl
 | `server/` | Vỏ HTTP mỏng, không có logic DSP |
 | `web/` | Thu micro và hiển thị, không có DSP |
 | `desktop-app/` | Client tkinter một file, thu micro và hiển thị, không có DSP |
+| `mobile-app/` | Client Flutter (Android/iOS), thu micro và hiển thị, không có DSP |
 
 ## Bề mặt HTTP
 
@@ -158,34 +161,55 @@ Quyết định này còn kéo theo hai chỗ dễ bỏ sót:
   peak picking chọn, còn echo cancellation thì chủ động triệt phần âm thanh
   tương quan với thứ máy đang phát — tức đúng kịch bản demo.
 
-**Desktop client hiện đi chệch quyết định này — và đây là chỗ cần biết trước khi
-tin vào kết quả của nó.** `desktop-app/app.py` đặt `SAMPLE_RATE = 22_050` rồi
-truyền thẳng vào `sd.InputStream`. Đó chính là "ép tần số" mà gạch đầu dòng trên
-vừa cảnh báo: thiết bị hiếm khi chạy sẵn ở 22 050 Hz, nên CoreAudio (hoặc
-PortAudio) tự hạ mẫu từ tần số gốc **trước khi ta thấy mẫu**, bằng một bộ lọc
-không nằm trong repo và không đo được từ đây. Web client thì thu ở tần số gốc và
-để `resample_poly` phía server làm nốt.
+#### Ba client, ba đường thu âm khác nhau
 
-Chặng còn lại thì sạch: 22 050 → 11 025 là chia đôi đúng hệ số nguyên, vẫn qua
-đúng bộ lọc chung ở `audio.py`. Vấn đề nằm ở chặng vô hình phía trước.
+Chỉ web client làm đúng quyết định này. Hai client kia lệch, mỗi bên một kiểu:
 
-Cách sửa đã rõ: bỏ tham số `samplerate` để PortAudio trả về tần số gốc của thiết
-bị, rồi ghi đúng tần số thật đó vào WAV header thay vì hằng số. **Cố ý hoãn lại**
-— sửa một dòng trên đường thu âm mà không đo lại đúng là kiểu thay đổi "vẫn chạy"
-nhưng âm thầm nhận diện kém đi, tức đúng cái bẫy mà cả quyết định này được viết
-ra để tránh. Điều kiện để làm: đo tỷ lệ nhận diện trước và sau, trên micro thật
-với kho đã dựng. Trước khi có số đo đó thì để nguyên.
+| | web | desktop | mobile |
+|---|---|---|---|
+| Tần số thu | **gốc của thiết bị** | ép 22 050 Hz | ép 22 050 Hz |
+| Độ dài | 8 s | 5 s | 6 s |
+| Chuẩn hoá phía client | không | đỉnh (hệ số tĩnh) | không |
+| AGC / noise supp. / echo cancel | **tắt cả ba** | không đụng tới | **bật cả ba** |
+| Xin spectrogram | khi người dùng tích chọn | luôn luôn | luôn luôn |
 
-**Chuẩn hoá đỉnh phía client thì không phải vấn đề tương tự.** `signal_to_wav_bytes`
-chia tín hiệu cho biên độ đỉnh trước khi lượng tử hoá xuống int16. Khác với AGC ở
-gạch đầu dòng trên, đây là **một hệ số tĩnh cho cả đoạn**: nó không bóp méo quan
-hệ giữa các đỉnh phổ, và `audio.py` dù sao cũng chuẩn hoá lại phía server. Đổi lại,
-đoạn thu nhỏ tiếng dùng hết được 16 bit thay vì nằm co cụm quanh 0.
+**Ép tần số (desktop và mobile).** Thiết bị hiếm khi chạy sẵn ở 22 050 Hz, nên
+tầng dưới — CoreAudio, PortAudio, hay plugin `record` — tự hạ mẫu từ tần số gốc
+**trước khi ta thấy mẫu**, bằng một bộ lọc không nằm trong repo và không đo được
+từ đây. Chặng sau thì sạch: 22 050 → 11 025 là chia đôi đúng hệ số nguyên, vẫn
+qua đúng bộ lọc chung ở `audio.py`. Vấn đề nằm ở chặng vô hình phía trước.
 
-**Độ dài đoạn thu cũng khác:** desktop 5 giây, web 8 giây, `shazam listen` mặc
-định 8 giây. Đoạn ngắn hơn sinh ít hash hơn nên điểm thấp hơn, mà đoạn thu qua
-micro vốn đã là loại cho điểm thấp nhất (xem quyết định #2). Ngưỡng `min_score`
-20 được chọn từ số đo trên đoạn cắt từ file, **chưa đo lại cho đoạn micro 5 giây**.
+Cách sửa đã rõ — để tầng thu trả về tần số gốc rồi ghi đúng tần số thật đó vào
+WAV header thay vì hằng số. **Cố ý hoãn lại**: sửa một dòng trên đường thu âm mà
+không đo lại đúng là kiểu thay đổi "vẫn chạy" nhưng âm thầm nhận diện kém đi, tức
+đúng cái bẫy mà cả quyết định này được viết ra để tránh. Điều kiện để làm: đo tỷ
+lệ nhận diện trước và sau, trên micro thật với kho đã dựng.
+
+**Mobile bật cả ba hiệu ứng — đây là chỗ lệch nặng nhất.**
+`recorder_service.dart` đặt `autoGain: true`, `echoCancel: true`,
+`noiseSuppress: true`, đúng ba thứ mà gạch đầu dòng trên vừa giải thích vì sao
+phải tắt. Chúng không phải chuyện thẩm mỹ: AGC đổi độ lợi **theo thời gian** nên
+chuẩn hoá tĩnh phía server không gỡ lại được, noise suppression làm yếu đúng các
+thành phần tông ổn định mà peak picking chọn, và echo cancellation triệt phần âm
+thanh tương quan với thứ máy đang phát — tức đúng kịch bản demo, khi điện thoại
+nghe nhạc phát từ loa gần đó. Nghịch lý: `config.dart` có sẵn ghi chú
+"We do not resample on the client — see `docs/kien-truc.md` design decision #1",
+nên phần *resample* thì có ý thức làm đúng, còn phần *hiệu ứng* thì không.
+
+Cũng **chưa đo** ảnh hưởng. Ba hiệu ứng này thường bị bỏ qua trên emulator (mã có
+ghi chú đúng điều đó), nên thử trên emulator sẽ không thấy vấn đề — chỉ máy thật
+mới lộ.
+
+**Chuẩn hoá đỉnh phía desktop thì không phải vấn đề tương tự.**
+`signal_to_wav_bytes` chia tín hiệu cho biên độ đỉnh trước khi lượng tử hoá xuống
+int16. Khác với AGC, đây là **một hệ số tĩnh cho cả đoạn**: nó không bóp méo quan
+hệ giữa các đỉnh phổ, và `audio.py` dù sao cũng chuẩn hoá lại phía server. Đổi
+lại, đoạn thu nhỏ tiếng dùng hết được 16 bit thay vì nằm co cụm quanh 0.
+
+**Độ dài đoạn thu:** web 8 giây, mobile 6, desktop 5, `shazam listen` mặc định 8.
+Đoạn ngắn hơn sinh ít hash hơn nên điểm thấp hơn, mà đoạn thu qua micro vốn đã là
+loại cho điểm thấp nhất (xem quyết định #2). Ngưỡng `min_score` 20 chọn từ số đo
+trên **đoạn cắt từ file**, chưa đo lại cho đoạn micro ngắn ở bất kỳ client nào.
 
 ### 2. Ngưỡng điểm tuyệt đối **và** kiểm tra tỷ lệ với á quân
 
@@ -283,14 +307,15 @@ chạm 62 573 dòng thay vì 1 778.
 | File mp3 đầy đủ 30 giây | 0,82-2,52 s |
 
 > Ngưỡng 2 giây **đạt với truy vấn thật** (web app thu 8 giây, `shazam listen`
-> mặc định 8 giây, desktop app 5 giây). Nhưng gửi nguyên bài 30 giây thì đã chạm
-> 2,52 s: truy vấn dài gấp ba sinh hash gấp ba và tra cứu nặng gấp ba. Đây là
-> ràng buộc cần biết trước khi tăng kích thước kho thêm nữa.
+> mặc định 8 giây, mobile 6 giây, desktop 5 giây). Nhưng gửi nguyên bài 30 giây
+> thì đã chạm 2,52 s: truy vấn dài gấp ba sinh hash gấp ba và tra cứu nặng gấp
+> ba. Đây là ràng buộc cần biết trước khi tăng kích thước kho thêm nữa.
 >
-> Desktop app gọi **hai** endpoint cho mỗi lần nhận diện — `/api/match` rồi
+> Desktop và mobile gọi **hai** endpoint cho mỗi lần nhận diện — `/api/match` rồi
 > `/api/spectrogram`, cùng một tệp WAV tải lên hai lần — nên tổng thời gian người
 > dùng chờ là tổng của hai lượt. Web app chỉ xin spectrogram khi người dùng tự
-> tích chọn.
+> tích chọn. Với mobile qua Wi-Fi, lượt tải lên thứ hai đáng kể hơn hẳn so với
+> desktop chạy cùng máy với server.
 
 ### Chất lượng nhận diện ở quy mô thật
 
@@ -319,10 +344,11 @@ Node 24.15.0. Máy 10 nhân.
 
 ## Những thứ cố ý không làm
 
-- **Client mobile.** Backend đã đủ để dùng lại mà không sửa gì — desktop client
-  đã chứng minh điều đó: thêm nó vào không phải sửa một dòng nào ở `src/`.
-- **Đóng gói desktop client thành file chạy được.** Không có PyInstaller,
-  py2app hay spec nào trong repo; chạy bằng `python desktop-app/app.py`.
+- **Đóng gói client thành file chạy được.** Desktop không có PyInstaller, py2app
+  hay spec nào trong repo — chạy bằng `python desktop-app/app.py`. Mobile cũng
+  chưa có bản dựng phát hành, chỉ `flutter run`.
+- **Thống nhất tham số thu âm giữa ba client.** Biết là lệch, đã ghi ở quyết
+  định #1, nhưng chưa gộp vì chưa đo được cái nào tốt hơn cái nào.
 - **Cắt bỏ hash quá phổ biến.** Kho đủ 8 003 bài trung bình **12,65 dòng/hash**,
   hash phổ biến nhất xuất hiện 616 lần. Tra cứu đã chiếm 79% thời gian query
   nhưng tổng vẫn chỉ 0,26–0,58 s, còn xa ngưỡng 2 giây — nên chưa cắt. Đây là

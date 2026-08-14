@@ -15,6 +15,15 @@ data/
 web/node_modules/
 web/dist/
 
+# Flutter / mobile app
+# Build output is already covered by mobile-app/.gitignore. These are the
+# debug dumps that land outside it: `adb bugreport` writes a multi-megabyte
+# archive of logcat and system state, which is diagnostic output, not source.
+bugreport-*.zip
+
+# Scratch artifacts — screenshots and one-off output, not source
+tmp/
+
 # Environment
 .env
 

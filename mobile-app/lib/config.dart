@@ -12,10 +12,12 @@ const int sampleRate = 22050;
 /// Mono capture. Stereo would double the payload for no matcher gain.
 const int channels = 1;
 
-/// How long a single tap records. Six seconds gives the matcher enough
-/// hashes for a confident score (the server enforces a 1 s floor;
-/// anything under ~3 s is reliably weak).
-const Duration recordDuration = Duration(seconds: 6);
+/// How long a single tap records. Eight seconds is one second longer
+/// than the desktop client and matches `shazam listen` and the web
+/// client; the extra hashes translate directly into a higher match
+/// score. Anything under ~3 s is reliably weak; the server enforces a
+/// 1 s floor.
+const Duration recordDuration = Duration(seconds: 8);
 
 /// Match the desktop + web upload ceiling so error messages stay
 /// consistent across clients.

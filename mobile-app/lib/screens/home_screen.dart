@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -6,6 +7,8 @@ import '../config.dart';
 import '../models/match_result.dart';
 import '../services/api_client.dart';
 import '../services/recorder_service.dart';
+import '../services/wav_normalizer.dart';
+import '../widgets/api_log_panel.dart';
 import '../widgets/match_card.dart';
 import '../widgets/record_button.dart';
 import '../widgets/spectrogram_view.dart';
@@ -30,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<int>? _spectrogramBytes;
   String _status = 'Sẵn sàng.';
   RecordButtonState _buttonState = RecordButtonState.ready;
+  List<ApiLogEntry> _logEntries = [];
 
   Timer? _recordingTimer;
 
@@ -104,7 +108,10 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final List<int> wavBytes;
+      // `wavBytes` is `var` because the normaliser step below may swap
+      // it for the re-encoded buffer; the API + spectrogram calls then
+      // upload the normalised bytes.
+      List<int> wavBytes;
       try {
         wavBytes = await _recorder.stop();
       } on RecorderError catch (e) {
@@ -121,6 +128,24 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
+      // Peak-normalise before upload so the matcher sees the same
+      // loudness as the desktop client. Mirrors `signal_to_wav_bytes`
+      // in desktop-app/app.py. Without this step a quiet mobile
+      // recording can drop below the matcher's noise floor even when
+      // the song is audible. Done in try/catch so a corrupt clip does
+      // not crash the whole flow — we fall back to the raw bytes.
+      if (WavNormalizer.looksLikeWav(wavBytes)) {
+        try {
+          final peakBefore = WavNormalizer.measurePeak(wavBytes);
+          wavBytes = WavNormalizer.peakNormalizeList(wavBytes);
+          debugPrint(
+            'WavNormalizer: peak before=$peakBefore after=${WavNormalizer.measurePeak(wavBytes)}',
+          );
+        } catch (e, st) {
+          debugPrint('WavNormalizer failed, uploading raw bytes: $e\n$st');
+        }
+      }
+
       try {
         final match = await _api.matchAudio(wavBytes);
         if (!mounted) return;
@@ -128,6 +153,11 @@ class _HomeScreenState extends State<HomeScreen> {
           _match = match;
           _status = match.match == null ? 'Không nhận ra bài nào.' : 'Xong.';
         });
+        _logApi(
+          'POST /api/match',
+          200,
+          const JsonEncoder.withIndent('  ').convert(match.toJson()),
+        );
 
         // Spectrogram is purely cosmetic — do not fail the whole flow if
         // it errors out. The match verdict is already on screen.
@@ -135,14 +165,22 @@ class _HomeScreenState extends State<HomeScreen> {
           final png = await _api.getSpectrogram(wavBytes);
           if (!mounted) return;
           setState(() => _spectrogramBytes = png);
+          _logApi(
+            'POST /api/spectrogram',
+            200,
+            '<${png.length} bytes PNG>',
+          );
         } on ApiError catch (e) {
           if (!mounted) return;
           _setStatus('Đã nhận diện nhưng lỗi khi tải spectrogram: ${e.message}');
+          _logApi('POST /api/spectrogram', e.status, e.message);
         }
       } on ApiError catch (e) {
+        _logApi('POST /api/match', e.status, e.message);
         _showError('Lỗi máy chủ', e.message);
       } catch (e, st) {
         debugPrint('Unexpected match error: $e\n$st');
+        _logApi('POST /api/match', -1, e.toString());
         _showError('Lỗi không mong đợi', e.toString());
       }
     } finally {
@@ -178,6 +216,26 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _status = value);
   }
 
+  /// Append a new entry to the panel, capping history at 50 to avoid
+  /// unbounded memory growth in long debug sessions.
+  void _logApi(String endpoint, int status, String body) {
+    if (!mounted) return;
+    setState(() {
+      _logEntries = [
+        ApiLogEntry(endpoint: endpoint, status: status, body: body),
+        ..._logEntries,
+      ];
+      if (_logEntries.length > ApiLogPanel.maxEntries) {
+        _logEntries = _logEntries.sublist(0, ApiLogPanel.maxEntries);
+      }
+    });
+  }
+
+  void _clearLog() {
+    if (!mounted) return;
+    setState(() => _logEntries = []);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -204,6 +262,12 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 _status,
                 style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              const SizedBox(height: 16),
+              ApiLogPanel(
+                entries: _logEntries,
+                onClear: _clearLog,
               ),
               const SizedBox(height: 16),
               if (_match != null) ...[
@@ -277,7 +341,7 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'Bấm nút phía trên để thu 6 giây và nhận diện.',
+            'Bấm nút phía trên để thu 8 giây và nhận diện.',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,

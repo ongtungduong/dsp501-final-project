@@ -8,9 +8,14 @@ A thin shell over :func:`shazam.matcher.identify` and :func:`shazam.audio.load_b
 from __future__ import annotations
 
 import io
+import json
 import time
+import struct
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import numpy as np
 import psycopg
@@ -64,12 +69,19 @@ class AppDeps:
         max_upload_bytes: Ceiling enforced before a body is fully buffered.
         corpus_songs: Track count, counted once at startup.
         corpus_fingerprints: Fingerprint row count, counted once at startup.
+        save_uploads: When true, ``/api/match`` writes each received audio
+            file to ``uploads_dir`` for audit / replay. Off by default.
+        uploads_dir: Destination directory for saved uploads. Pre-created
+            at startup; missing or unwritable means the server refused to
+            start, not ``/api/match`` returning 500.
     """
 
     pool: ConnectionPool
     max_upload_bytes: int
     corpus_songs: int
     corpus_fingerprints: int
+    save_uploads: bool
+    uploads_dir: Path | None
 
 
 def _deps(request: Request) -> AppDeps:
@@ -116,6 +128,170 @@ async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     if not data:
         raise HTTPException(status_code=422, detail="Tệp tải lên không có dữ liệu")
     return data
+
+
+def _save_upload(
+    data: bytes,
+    content_type: str | None,
+    uploads_dir: Path,
+    *,
+    request_id: str | None = None,
+) -> Path:
+    """Persist an upload to disk for audit, returning the path written.
+
+    Best-effort: a write failure is logged but does not break the request,
+    so the live match path is never downgraded because the audit shadow
+    stopped working. The filename is a UTC timestamp + random UUID plus an
+    extension chosen by (a) the multipart ``Content-Type`` if recognised,
+    then falling back to (b) a magic-byte sniff, then (c) ``.bin`` last
+    resort. Clients choose the body, the server owns the name, so a hostile
+    or malformed ``filename=`` field cannot escape ``uploads_dir`` or
+    clobber an existing file. The parent dir is created on demand so a
+    fresh checkout only needs ``SAVE_UPLOADS=true`` to start working.
+
+    A sidecar ``<name>.json`` is written next to the body with whatever
+    metadata we know — content_type, request_id — so a saved file can be
+    traced back to the request that produced it without guessing.
+    """
+    ext = _extension_for_content_type(content_type)
+    if ext == ".bin":
+        ext = _extension_for_magic(data)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    base = f"{stamp}_{uuid4().hex}"
+    target = uploads_dir / f"{base}{ext}"
+    tmp = target.with_suffix(target.suffix + ".tmp")
+
+    try:
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        # ``x`` on the temp file means we never overwrite a collision, and we
+        # then rename to the final path atomically. Two writes in the same
+        # microsecond with the same UUID would already be a bug.
+        with open(tmp, "xb") as handle:
+            handle.write(data)
+        tmp.replace(target)
+    except OSError:
+        logger.warning("upload_save_failed", path=str(target), exc_info=True)
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return target
+
+    # Sidecar metadata — written after the body lands, so a parse error here
+    # never touches the audio file. ``json`` extension keeps it discoverable
+    # without colliding with future audio MIME extensions.
+    sidecar = uploads_dir / f"{base}.json"
+    try:
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                    "request_id": request_id,
+                    "content_type": content_type,
+                    "detected_ext": ext,
+                    "size_bytes": len(data),
+                    "wav": _wav_summary(data) if ext == ".wav" else None,
+                },
+                indent=2,
+            )
+        )
+    except OSError:
+        logger.warning("upload_sidecar_failed", path=str(sidecar), exc_info=True)
+
+    return target
+
+
+def _extension_for_content_type(content_type: str | None) -> str:
+    """Map a multipart ``Content-Type`` to a safe file extension.
+
+    Defaults to ``.bin`` so an unrecognised type still persists, audit
+    metadata stays decodable (every known browser audio MIME has a known
+    extension), and nothing ever lands on disk with no extension at all.
+    """
+    if not content_type:
+        return ".bin"
+    # Strip any ``; charset=`` / boundary parameters clients may add.
+    media = content_type.split(";", 1)[0].strip().lower()
+    return {
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/wave": ".wav",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/ogg": ".ogg",
+        "audio/flac": ".flac",
+        "audio/x-flac": ".flac",
+        "audio/mp4": ".m4a",
+        "audio/aac": ".aac",
+        "audio/webm": ".webm",
+    }.get(media, ".bin")
+
+
+def _extension_for_magic(data: bytes) -> str:
+    """Pick a file extension from the first few bytes of the body.
+
+    Only used when ``Content-Type`` is missing or unrecognised. Sniffs
+    the common audio container formats; falls back to ``.bin`` so we
+    never claim a wrong type — VLC and ``ffprobe`` can still introspect.
+    Cheap by design: 12 bytes for the header checks, no full decode.
+    """
+    if len(data) < 4:
+        return ".bin"
+    if data[:4] == b"RIFF" and len(data) >= 12 and data[8:12] == b"WAVE":
+        return ".wav"
+    if data[:3] == b"ID3" or data[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3"
+    if data[:4] == b"OggS":
+        return ".ogg"
+    if data[:4] == b"fLaC":
+        return ".flac"
+    if data[4:8] == b"ftyp":
+        # MP4/M4A family — all share the same ``ftyp`` box at offset 4.
+        return ".m4a"
+    return ".bin"
+
+
+def _wav_summary(data: bytes) -> dict | None:
+    """Best-effort WAV header parse for the sidecar metadata.
+
+    Locates the ``fmt `` and ``data`` chunks by walking the RIFF
+    container so the offset stays correct across non-standard header
+    sizes. Returns ``None`` on any parse error rather than raising —
+    sidecar metadata is nice-to-have, never blocking.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    try:
+        i = 12
+        sample_rate = channels = bits = 0
+        data_bytes = 0
+        while i + 8 <= len(data):
+            cid = data[i:i + 4]
+            csz = struct.unpack("<I", data[i + 4:i + 8])[0]
+            if cid == b"fmt " and csz >= 16:
+                fmt = data[i + 8:i + 8 + csz]
+                _tag, channels, sample_rate, _br, _ba, bits = struct.unpack(
+                    "<HHIIHH", fmt[:16]
+                )
+            if cid == b"data":
+                data_bytes = csz
+                break
+            i += 8 + csz
+        duration = (
+            data_bytes / (channels * bits / 8 * sample_rate)
+            if channels and bits and sample_rate
+            else 0.0
+        )
+        return {
+            "channels": channels,
+            "sample_rate": sample_rate,
+            "bits_per_sample": bits,
+            "data_bytes": data_bytes,
+            "duration_seconds": round(duration, 3),
+        }
+    except Exception:
+        return None
 
 
 async def _decode_audio(data: bytes) -> NDArray[np.float32]:
@@ -175,6 +351,24 @@ async def match_audio(request: Request, file: UploadFile) -> MatchResponse:
     """
     deps = _deps(request)
     data = await _read_upload(file, deps.max_upload_bytes)
+
+    saved_path: Path | None = None
+    if deps.save_uploads and deps.uploads_dir is not None:
+        # ``run_in_threadpool`` runs sync code in a worker thread;
+        # ``contextvars`` don't automatically follow, so we capture the
+        # request_id here and pass it explicitly. Anything else from the
+        # per-request context isn't needed by the audit path.
+        from structlog.contextvars import get_contextvars
+
+        request_id = get_contextvars().get("request_id")
+        saved_path = await run_in_threadpool(
+            _save_upload,
+            data,
+            file.content_type,
+            deps.uploads_dir,
+            request_id=request_id,
+        )
+
     signal = await _decode_audio(data)
 
     start = time.perf_counter()
@@ -187,6 +381,7 @@ async def match_audio(request: Request, file: UploadFile) -> MatchResponse:
         score=result.score if result else 0,
         elapsed_ms=elapsed_ms,
         matched=result is not None,
+        saved_path=str(saved_path) if saved_path else None,
     )
 
     return MatchResponse(

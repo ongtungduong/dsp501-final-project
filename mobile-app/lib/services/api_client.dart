@@ -13,6 +13,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../config.dart';
 import '../models/match_result.dart';
@@ -85,6 +86,7 @@ class ApiClient {
           uploadFieldName,
           wavBytes,
           filename: uploadFileName,
+          contentType: MediaType('audio', 'wav'),
         ),
       );
 
@@ -123,6 +125,7 @@ class ApiClient {
           uploadFieldName,
           wavBytes,
           filename: uploadFileName,
+          contentType: MediaType('audio', 'wav'),
         ),
       );
 

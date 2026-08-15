@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -99,11 +100,47 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("startup_complete", songs=songs, fingerprints=fingerprints)
 
+    uploads_dir: Path | None = None
+    save_uploads = settings.save_uploads
+    if save_uploads:
+        uploads_dir = settings.uploads_dir
+        try:
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            # Probe write-ability by writing and removing a tiny file. A
+            # directory that lets ``mkdir`` succeed but rejects writes is rare
+            # but cheap to surface here. We auto-fallback rather than crash:
+            # the audit shadow is nice-to-have, the live match path is not,
+            # so a misconfigured UPLOADS_DIR degrades audit, not serving.
+            probe = uploads_dir / ".write_probe"
+            try:
+                probe.write_text("ok")
+                probe.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "uploads_dir_unwritable_falling_back",
+                    uploads_dir=str(uploads_dir),
+                    error=str(exc),
+                )
+                save_uploads = False
+                uploads_dir = None
+        except OSError as exc:
+            logger.warning(
+                "uploads_dir_create_failed_falling_back",
+                uploads_dir=str(uploads_dir),
+                error=str(exc),
+            )
+            save_uploads = False
+            uploads_dir = None
+        else:
+            logger.info("uploads_save_enabled", uploads_dir=str(uploads_dir))
+
     app.state.deps = AppDeps(
         pool=pool,
         max_upload_bytes=settings.max_upload_bytes,
         corpus_songs=songs,
         corpus_fingerprints=fingerprints,
+        save_uploads=save_uploads,
+        uploads_dir=uploads_dir,
     )
 
     try:

@@ -28,6 +28,22 @@ dependencies:
   # for two POSTs.
   http: ^1.2.2
 
+  # Pure-Dart WAV reader/writer used to peak-normalize the captured clip
+  # before upload (mirrors desktop-app's `signal_to_wav_bytes`). Without
+  # this step mobile recordings often come in quiet and the matcher
+  # score drops to noise level.
+  wav: ^1.5.0
+
+# path_provider_android 2.3.x switched to a pure-JNI / dartPluginClass-only
+# implementation that is not reliably picked up by the Flutter Gradle plugin
+# when the project still uses the older v2 embedding auto-generation path
+# (the GeneratedPluginRegistrant.java in android/app/src/main/ is empty for
+# this plugin, so getTemporaryDirectory() throws MissingPluginException).
+# Pinning to 2.2.x keeps the io.flutter.plugins.pathprovider.PathProviderPlugin
+# native class, which IS registered automatically.
+dependency_overrides:
+  path_provider_android: 2.2.15
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

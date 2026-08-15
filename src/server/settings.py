@@ -29,6 +29,13 @@ class Settings(BaseSettings):
         static_dir: Directory of the built web app to serve. Unset in
             development, where Vite serves it instead; Phase 7 sets it.
         log_level: Standard library level name, e.g. ``"INFO"``, ``"DEBUG"``.
+        save_uploads: Opt-in. When true, every audio file POSTed to
+            ``/api/match`` is written to ``uploads_dir`` verbatim for audit
+            and replay. Off by default so a long-running server cannot quietly
+            fill a disk.
+        uploads_dir: Directory writes land in when ``save_uploads`` is true.
+            Created on startup if it does not exist. Default ``data/uploads``
+            is already in ``.gitignore``.
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -38,6 +45,8 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     static_dir: Path | None = None
     log_level: str = "INFO"
+    save_uploads: bool = False
+    uploads_dir: Path = Path("data/uploads")
 
 
 @lru_cache

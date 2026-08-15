@@ -10,6 +10,7 @@ library;
 
 import 'dart:io';
 
+import 'package:flutter/services.dart' show MissingPluginException, PlatformException;
 import 'package:path_provider/path_provider.dart' as path_provider;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
@@ -88,8 +89,25 @@ class RecorderService {
 
     // The plugin requires a real filesystem path on all IO platforms.
     // We stage the file in the app's temporary directory so the OS
-    // reclaims it eventually.
-    final dir = await path_provider.getTemporaryDirectory();
+    // reclaims it eventually. Both Android (path_provider_android) and
+    // Chrome (path_provider_web) can fail when the plugin channel is
+    // not registered — `path_provider` itself is on pub.dev but only the
+    // platform-specific package gets bound to the engine. A MissingPlugin
+    // is recoverable; a raw PlatformException usually means the build did
+    // not include the platform plugin, so the catch-all surfaces a hint.
+    final Directory dir;
+    try {
+      dir = await path_provider.getTemporaryDirectory();
+    } on MissingPluginException {
+      throw RecorderError(
+        'Plugin path_provider chưa được đăng ký cho nền tảng này. '
+        'Chạy lại `flutter pub get` rồi build lại APK.',
+      );
+    } on PlatformException catch (e) {
+      throw RecorderError(
+        'Không lấy được thư mục tạm: ${e.message ?? e.code}',
+      );
+    }
     final stamp = DateTime.now().millisecondsSinceEpoch;
     final path = '${dir.path}/shazam_query_$stamp.wav';
 

@@ -98,4 +98,22 @@ class MatchResponse {
       elapsedMs: json['elapsedMs'] as int,
     );
   }
+
+  /// Reverse of [fromJson] with camelCase keys so the log panel can
+  /// pretty-print what the server actually returned.
+  Map<String, dynamic> toJson() => {
+    'match': match == null
+        ? null
+        : {
+            'songId': match!.songId,
+            'title': match!.title,
+            'artist': match!.artist,
+            'score': match!.score,
+            'alignedFraction': match!.alignedFraction,
+            'strength': match!.strength.name,
+            'offsetSeconds': match!.offsetSeconds,
+          },
+    'queryHashes': queryHashes,
+    'elapsedMs': elapsedMs,
+  };
 }

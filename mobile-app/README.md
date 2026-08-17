@@ -1,9 +1,10 @@
 # Mobile App — Nhận diện âm thanh (Flutter)
 
 Flutter client cho backend nhận diện nhạc bằng audio fingerprinting
-(DSP501). Bấm một nút, thu 6 giây từ micro, gửi lên hai endpoint của
-FastAPI hiện có (`/api/match` và `/api/spectrogram`), hiển thị tên bài /
-nghệ sĩ / điểm khớp cùng ảnh phổ trả về từ server.
+(DSP501). Bấm một nút, thu 8 giây từ micro, chuẩn hoá đỉnh trước khi gửi,
+rồi gửi lên hai endpoint của FastAPI hiện có (`/api/match` và
+`/api/spectrogram`), hiển thị tên bài / nghệ sĩ / điểm khớp cùng ảnh phổ
+trả về từ server.
 
 Cùng hai endpoint mà web client và desktop app dùng — backend không cần
 biết client nào đang gọi.
@@ -93,12 +94,14 @@ lib/
   services/
     api_client.dart            matchAudio() + getSpectrogram() + ApiError
     recorder_service.dart      bọc plugin `record`, xin quyền mic
+    wav_normalizer.dart        chuẩn hoá đỉnh WAV trước khi upload
   screens/
-    home_screen.dart           toàn bộ flow: thu → upload → hiển thị
+    home_screen.dart           toàn bộ flow: thu → chuẩn hoá → upload → hiển thị
   widgets/
     record_button.dart         nút 3 trạng thái
     match_card.dart            bài hát / nghệ sĩ / score / strength
     spectrogram_view.dart      PNG bytes -> Image.memory
+    api_log_panel.dart         nhật ký request/response gần nhất, phục vụ debug
 test/
   match_result_test.dart       parse JSON, strength enum, edge cases
   widget_test.dart             RecordButton: nhãn + khoá nút theo trạng thái
@@ -114,9 +117,10 @@ ios/
 |---|---|---|
 | Sample rate | 22050 Hz | Khớp rate corpus đã build, không resample |
 | Channels | 1 (mono) | Stereo không tăng độ chính xác khớp |
-| Duration | 6 giây | Đủ hash cho matcher, không chán đợi |
+| Duration | 8 giây | Khớp web + `shazam listen`, đủ hash cho điểm khớp cao hơn 6 s cũ |
 | Encoder | WAV PCM 16-bit | Server decode qua `soundfile`, opus bị reject |
 | AutoGain / EchoCancel / NoiseSuppress | **tắt** | Chỉnh cho tiếng nói, phá vân tay nhạc — xem [quyết định #1](../docs/kien-truc.md) |
+| Chuẩn hoá đỉnh trước khi gửi | **có** (`WavNormalizer`) | Độ lợi micro Android không ổn định; mirror bước `signal_to_wav_bytes` của desktop |
 
 ## Lỗi thường gặp
 

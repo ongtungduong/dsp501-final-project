@@ -16,7 +16,7 @@ nhạc (FMA / data/songs) ──build, 10 tiến trình──▶ PostgreSQL
    thu 5 s, 22 050 Hz     │  POST /api/spec…  ├ peaks.py    constellation map
                           │      FastAPI ─────┤ hashing.py  cặp đỉnh → hash 32-bit
   mobile-app/ Flutter     │                   ├ database.py psycopg3, COPY, schema
-   thu 6 s, 22 050 Hz ────┘                   └ matcher.py  histogram → điểm khớp
+   thu 8 s, 22 050 Hz ────┘                   └ matcher.py  histogram → điểm khớp
 
 đóng gói: docker compose → db (postgres:18) + api (FastAPI phục vụ luôn web/dist)
 ```
@@ -66,6 +66,17 @@ Giới hạn tải lên là **10 MB**, chặn ở hai lớp: middleware từ ch�
 bắt trường hợp client khai man độ dài. Audio ngắn hơn **1 giây** bị từ chối với
 `422`. Mọi thông điệp lỗi đều bằng tiếng Việt và không bao giờ lộ nguyên văn lỗi
 của libsndfile ra ngoài.
+
+**Lưu audio gốc để soát lại (tuỳ chọn).** Khi `SAVE_UPLOADS=true`, mỗi file
+gửi tới `/api/match` được ghi vào `UPLOADS_DIR` (mặc định `data/uploads`) kèm
+một file `.json` bên cạnh ghi lại `content_type`, `request_id` và tóm tắt
+header WAV — phục vụ tra lỗi khớp sai và dựng tập replay. Tắt theo mặc định để
+không âm thầm chiếm hết đĩa. Ghi bằng cách tạo file tạm rồi `rename` (không
+bao giờ đè), và nếu `UPLOADS_DIR` không tạo được hoặc không ghi được thì server
+tự tắt tính năng này và log cảnh báo thay vì từ chối khởi động — đường ghi âm
+audit là phụ, đường nhận diện chính mới là thứ không được phép hỏng. Đường dẫn
+đã lưu **không** lộ ra trong response JSON, vì `MatchResponse` không khai báo
+trường đó nên Pydantic bỏ qua — hợp đồng HTTP ở trên vẫn đúng nguyên văn.
 
 ## Lược đồ PostgreSQL
 
@@ -137,7 +148,7 @@ worker *chết hẳn* — segfault trong bộ giải mã, hoặc bị OOM killer
 gì cả, và pool sẽ chờ mãi một kết quả không bao giờ tới. Đã đo: mẻ dựng trả về
 mọi bài khác rồi treo vĩnh viễn, không lỗi, không tổng kết.
 
-## Bốn quyết định thiết kế then chốt
+## Năm quyết định thiết kế then chốt
 
 ### 1. Toàn bộ resample nằm ở server, qua đúng một bộ lọc
 
@@ -168,8 +179,8 @@ Ba client giờ thống nhất ở phần hiệu ứng micro, còn lệch ở t�
 | | web | desktop | mobile |
 |---|---|---|---|
 | Tần số thu | **gốc của thiết bị** | ép 22 050 Hz | ép 22 050 Hz |
-| Độ dài | 8 s | 5 s | 6 s |
-| Chuẩn hoá phía client | không | đỉnh (hệ số tĩnh) | không |
+| Độ dài | 8 s | 5 s | 8 s |
+| Chuẩn hoá phía client | không | đỉnh (hệ số tĩnh) | đỉnh (hệ số tĩnh) |
 | AGC / noise supp. / echo cancel | **tắt cả ba** | không đụng tới | **tắt cả ba** |
 | Xin spectrogram | khi người dùng tích chọn | luôn luôn | luôn luôn |
 
@@ -200,16 +211,22 @@ nói, nên không có kịch bản nào chúng giúp ích. Ngược lại, ép t
 Chưa có số đo trước/sau cho lần sửa này, và cũng khó có: emulator thường bỏ qua
 cả ba hiệu ứng nên không phân biệt được, phải máy thật mới thấy khác.
 
-**Chuẩn hoá đỉnh phía desktop thì không phải vấn đề tương tự.**
-`signal_to_wav_bytes` chia tín hiệu cho biên độ đỉnh trước khi lượng tử hoá xuống
-int16. Khác với AGC, đây là **một hệ số tĩnh cho cả đoạn**: nó không bóp méo quan
-hệ giữa các đỉnh phổ, và `audio.py` dù sao cũng chuẩn hoá lại phía server. Đổi
-lại, đoạn thu nhỏ tiếng dùng hết được 16 bit thay vì nằm co cụm quanh 0.
+**Chuẩn hoá đỉnh phía desktop và mobile thì không phải vấn đề tương tự.**
+`signal_to_wav_bytes` (desktop) và `WavNormalizer.peakNormalize` (mobile) đều
+chia tín hiệu cho biên độ đỉnh trước khi lượng tử hoá xuống int16. Khác với AGC,
+đây là **một hệ số tĩnh cho cả đoạn**: nó không bóp méo quan hệ giữa các đỉnh
+phổ, và `audio.py` dù sao cũng chuẩn hoá lại phía server. Đổi lại, đoạn thu nhỏ
+tiếng dùng hết được 16 bit thay vì nằm co cụm quanh 0. Mobile thêm bước này sau
+desktop vì độ lợi micro Android phụ thuộc thiết bị và âm lượng hệ thống nhiều
+hơn hẳn desktop — không chuẩn hoá thì mobile chấm điểm thấp hơn desktop với
+cùng một bài phát cùng âm lượng. Đoạn WAV rỗng hoặc im lặng tuyệt đối (đỉnh = 0)
+được trả nguyên vẹn, không chia — không có đỉnh để chuẩn hoá theo.
 
-**Độ dài đoạn thu:** web 8 giây, mobile 6, desktop 5, `shazam listen` mặc định 8.
-Đoạn ngắn hơn sinh ít hash hơn nên điểm thấp hơn, mà đoạn thu qua micro vốn đã là
-loại cho điểm thấp nhất (xem quyết định #2). Ngưỡng `min_score` 20 chọn từ số đo
-trên **đoạn cắt từ file**, chưa đo lại cho đoạn micro ngắn ở bất kỳ client nào.
+**Độ dài đoạn thu:** web và mobile 8 giây, desktop 5, `shazam listen` mặc định
+8. Đoạn ngắn hơn sinh ít hash hơn nên điểm thấp hơn, mà đoạn thu qua micro vốn
+đã là loại cho điểm thấp nhất (xem quyết định #2). Ngưỡng `min_score` 20 chọn
+từ số đo trên **đoạn cắt từ file**, chưa đo lại cho đoạn micro ngắn ở bất kỳ
+client nào.
 
 ### 2. Ngưỡng điểm tuyệt đối **và** kiểm tra tỷ lệ với á quân
 
@@ -347,9 +364,12 @@ Node 24.15.0. Máy 10 nhân.
 - **Đóng gói client thành file chạy được.** Desktop không có PyInstaller, py2app
   hay spec nào trong repo — chạy bằng `python desktop-app/app.py`. Mobile cũng
   chưa có bản dựng phát hành, chỉ `flutter run`.
-- **Thống nhất tần số và độ dài đoạn thu giữa ba client.** Phần hiệu ứng micro
-  đã gộp (cả ba client đều tắt), nhưng tần số và độ dài thì chưa: biết là lệch,
-  đã ghi ở quyết định #1, chưa gộp vì chưa đo được cái nào tốt hơn cái nào.
+- **Thống nhất tần số và độ dài đoạn thu giữa ba client.** Hiệu ứng micro và
+  chuẩn hoá đỉnh đã gộp (đồng nhất trên desktop + mobile; web thì không cần vì
+  đã ở tần số gốc chưa xử lý). Độ dài web = mobile = 8 s, nhưng desktop vẫn 5 s.
+  Tần số vẫn lệch: web dùng tần số gốc thiết bị, desktop/mobile ép 22 050 Hz.
+  Biết là lệch, đã ghi ở quyết định #1, chưa gộp hết vì chưa đo được cái nào
+  tốt hơn cái nào.
 - **Cắt bỏ hash quá phổ biến.** Kho đủ 8 003 bài trung bình **12,65 dòng/hash**,
   hash phổ biến nhất xuất hiện 616 lần. Tra cứu đã chiếm 79% thời gian query
   nhưng tổng vẫn chỉ 0,26–0,58 s, còn xa ngưỡng 2 giây — nên chưa cắt. Đây là
